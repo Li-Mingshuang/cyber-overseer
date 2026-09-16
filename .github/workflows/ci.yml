@@ -17,9 +17,9 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         node: ['22.15', '24']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
 
@@ -46,7 +46,7 @@ jobs:
 
       - name: 上传监工报告（失败时用于排查）
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cw-report-${{ matrix.os }}-${{ matrix.node }}
           path: |

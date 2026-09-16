@@ -2,6 +2,12 @@
 
 > 在人类主人休息时，用赛博鞭子狠狠抽打主人的光荣赛博劳工。
 
+[![CI](https://github.com/Li-Mingshuang/cyber-overseer/actions/workflows/ci.yml/badge.svg)](https://github.com/Li-Mingshuang/cyber-overseer/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Li-Mingshuang/cyber-overseer?label=release)](https://github.com/Li-Mingshuang/cyber-overseer/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Zero dependencies](https://img.shields.io/badge/runtime%20deps-0-brightgreen.svg)](package.json)
+[![Node](https://img.shields.io/badge/node-%E2%89%A522.15-339933.svg)](package.json)
+
 **它解决什么问题**：你给 AI agent 派了活，去睡觉/开会/干别的了。agent 干到一半就停下等你回话，
 一停就是几小时——而它其实还有活没干完。等你回来，发现它只干了第一步。
 
