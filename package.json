@@ -1,0 +1,50 @@
+{
+  "name": "cyber-overseer",
+  "version": "0.1.0",
+  "description": "赛博监工 (Cyber Overseer): 在人类主人休息时，用赛博鞭子抽打赛博劳工——读取方案文档与 agent 最后一次回答，判定是否收工，否则持续抽鞭直到目标完成。Zero-dependency supervisor for DSH / Codex / opencode / Cursor / any CLI or GUI agent.",
+  "keywords": [
+    "agent",
+    "supervisor",
+    "watchdog",
+    "automation",
+    "dsh",
+    "codex",
+    "opencode",
+    "cursor",
+    "mcp",
+    "acp",
+    "whip"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "cyber-overseer": "bin/cw.mjs",
+    "cw": "bin/cw.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "docs",
+    "templates",
+    "AGENTS.md",
+    "README.md",
+    "README.en.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "scripts": {
+    "test": "node --test test/",
+    "test:watch": "node --test --watch test/",
+    "demo": "node bin/cw.mjs run --config examples/lazy-agent/cw.config.mjs",
+    "doctor": "node bin/cw.mjs doctor",
+    "lint": "node scripts/lint.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cyber-overseer/cyber-overseer.git"
+  }
+}

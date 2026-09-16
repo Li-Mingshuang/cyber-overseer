@@ -1,0 +1,28 @@
+# 依赖与产物
+node_modules/
+package-lock.json
+pnpm-lock.yaml
+npm-debug.log*
+pnpm-debug.log*
+
+# 监工运行时状态（日志、状态、信箱、报告都可能含会话内容，不入库）
+.cyber/
+*.cyber-journal.jsonl
+CW-REPORT.md
+cw-report*.md
+
+# 演示跑出来的产物
+examples/*/artifacts/
+examples/*/work-log.txt
+examples/*/CW-REPORT.md
+
+# 临时/侦察产物
+.recon-tmp/
+*.tmp
+*.log
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,12 @@
+# 统一行尾：仓库内一律 LF（Windows 上 PowerShell 5.1 也能正常执行 LF 脚本）
+* text=auto eol=lf
+
+*.ps1 text eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.ico binary
+*.zstd binary
