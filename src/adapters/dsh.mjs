@@ -317,7 +317,12 @@ export function createDshAdapter(ctx) {
       }
       return { ok: true, mode: 'inject', detail: `已通过 ${url} 注入（mode=${body.payload.mode}，rpcId=${body.rpcId}）` }
     } catch (error) {
-      return { ok: false, mode: 'inject', detail: `DSH HTTP 注入异常：${error?.message ?? error}` }
+      // 连不上通常意味着"DSH 的 web 服务没在跑"，属于配置/环境问题而不是监工出错
+      return {
+        ok: false, mode: 'inject', kind: 'setup',
+        detail: `连不上 DSH 的 HTTP 接口 ${url}：${error?.message ?? error}`
+          + '（http 模式需要 DSH web 正在运行；或者改用 options.whip="headless"）',
+      }
     }
   }
 

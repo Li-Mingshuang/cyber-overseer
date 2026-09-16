@@ -278,11 +278,28 @@ export async function runOverseer(opts) {
       detail: injected?.detail ?? null, chars: whipText.length, whip: whipText,
     })
     if (injected?.ok === false) {
+      // 失败要分类：通道没配置好 ≠ 出错。前者应该停下喊人（并给出怎么配），后者才是 error。
+      const kind = injected?.kind ?? 'fatal'
+      if (kind === 'transient') {
+        log.warn(`抽鞭暂时失败（${injected.detail ?? '未说明'}），下一轮再试`)
+        journal.event('error', { where: 'whip', transient: true, message: injected.detail ?? null })
+        store.recordRound(makeRound({ round, verdict, evidence, injected: whipText, snapshot, store }))
+        store.patch({ status: 'running' })
+        await sleep(Math.max(1000, config.guard?.cooldownMs ?? 0), signal).catch(() => {})
+        continue
+      }
       log.error(`抽鞭失败：${injected.detail ?? '适配器未说明原因'}`)
-      journal.event('error', { where: 'whip', message: injected.detail ?? null })
+      journal.event('error', { where: 'whip', kind, message: injected.detail ?? null })
       store.recordRound(makeRound({ round, verdict, evidence, injected: whipText, snapshot, store }))
-      store.patch({ status: 'error', stopReason: 'error' })
-      return finish({ ...ctx, stopReason: 'error', verdict, exitCode: EXIT_CODES.error })
+      const setupProblem = kind === 'setup'
+      store.patch({ status: setupProblem ? 'needs-human' : 'error', stopReason: setupProblem ? 'needs-human' : 'error' })
+      return finish({
+        ...ctx,
+        stopReason: setupProblem ? 'needs-human' : 'error',
+        verdict,
+        exitCode: EXIT_CODES[setupProblem ? 'needs-human' : 'error'],
+        error: setupProblem ? `抽鞭通道还没配置好：${injected.detail ?? ''}` : undefined,
+      })
     }
     log.ok(`已抽鞭（第 ${round} 轮，${injected?.mode === 'foreground' ? '前台跑完' : '注入待跑'}，${whipText.length} 字）`)
     // 让 agent 的订阅者（GUI/终端）有时间把新消息显示出来，避免抢焦点时打字打到旧输入框
@@ -459,6 +476,7 @@ async function finish(ctx) {
     rounds: state.rounds?.length ?? 0,
     costUsd: state.costUsd ?? 0,
     exitCode: ctx.exitCode ?? 0,
+    error: ctx.error ?? null,
   }
 }
 

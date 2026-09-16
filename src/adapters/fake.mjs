@@ -78,6 +78,16 @@ export function createFakeAdapter(ctx) {
       const state = read()
       state.step = (state.step ?? 0) + 1
       state.lastWhip = text
+      // 测试用：模拟"通道没配好/临时故障"，用来验证引擎的失败分类与熔断
+      const fail = options.failWith
+      if (fail && (!fail.times || (state.failures ?? 0) < fail.times)) {
+        state.failures = (state.failures ?? 0) + 1
+        write(state)
+        return {
+          ok: false, mode: 'inject', kind: fail.kind ?? 'fatal',
+          detail: fail.detail ?? '（假适配器模拟的抽鞭失败）',
+        }
+      }
       const reply = typeof options.reply === 'function' ? options.reply(state.step, text, state) : defaultReply(state.step)
       state.answers = [...(state.answers ?? []), reply].slice(-50)
       state.idle = true

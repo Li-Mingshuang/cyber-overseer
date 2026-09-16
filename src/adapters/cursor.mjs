@@ -215,9 +215,10 @@ export function createCursorAdapter(ctx) {
       const mode = options.whip ?? 'hooks'
       if (mode === 'hooks') {
         return {
-          ok: false, mode: 'inject',
+          ok: false, mode: 'inject', kind: 'setup',
           detail: 'Cursor 走 hooks 模式时不需要（也不能）由监工主动注入：请先 `cw hooks install cursor`，'
-            + '之后由 Cursor 自己的 stop 钩子回调 `cw hook cursor-stop` 来驱动——那样连监工进程都不必常驻。',
+            + '之后由 Cursor 自己的 stop 钩子回调 `cw hook cursor-stop` 来驱动——那样连监工进程都不必常驻。'
+            + '（想现在就手动抽一鞭，可以临时用 agent.options.whip = "human-sim" 或 "desktop-bridge"）',
         }
       }
       if (mode === 'desktop-bridge') return whipViaDesktopBridge(text, session, engineCtx)

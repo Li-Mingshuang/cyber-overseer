@@ -53,6 +53,10 @@ import { oneLine } from '../util/text.mjs'
  * @property {string} [detail]
  * @property {string} [answer] mode=foreground 时可直接拿到的新回答
  * @property {number} [exitCode]
+ * @property {'setup'|'transient'|'fatal'} [kind] 失败分类：
+ *   `setup`     = 通道没配置好/没启动（例如 Cursor 还没装钩子、DSH web 没在跑）→ 停下喊人，而不是报错
+ *   `transient` = 临时故障（网络抖动、目标窗口暂时不在）→ 引擎下轮可以再试
+ *   `fatal`     = 默认，真正的错误
  *
  * @typedef {Object} Adapter
  * @property {string} id
