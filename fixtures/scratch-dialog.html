@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>CW-SCRATCH</title>
+<style>
+  html, body { margin: 0; padding: 0; font: 15px/1.5 system-ui, sans-serif; }
+  /* 输入框故意做得很大：真实场景里"点不准输入框"是拟人通道最常见的失败原因，
+     夹具页面把命中区放到最大，好让自检聚焦在"通道本身能不能用"上。 */
+  #ed { box-sizing: border-box; width: 100%; height: 76vh; border: 3px solid #666; padding: 14px; font-size: 18px; outline: none; }
+  #ed:focus { border-color: #0a0; }
+  #panel { padding: 8px 14px; }
+  #log { white-space: pre-wrap; background: #f2f2f2; padding: 8px; margin-top: 6px; }
+  .hint { color: #666; margin: 6px 0; }
+</style>
+</head>
+<body>
+<!--
+  赛博监工 · 拟人通道的测试夹具页面。
+  scripts/verify-human-sim.mjs 会用一个隔离的浏览器实例打开它，然后：
+    1) 用"抢焦点 + 探针确认 + 粘贴 + 回车"把一句话打进上面的输入框；
+    2) 通过窗口标题与本页日志确认"应用确实收到了"；
+    3) 再用剪贴板把整页文字读回来，验证监工能读到"对话框内容"。
+  回车后标题会变成 CW-RECV:<内容>，这是端到端成功的标志。
+-->
+<div id="ed" contenteditable="true"></div>
+<div id="panel">
+  <p class="hint">↑ 在这个框里按回车：页面会把内容记到下面的日志，并把窗口标题改成 CW-RECV:&lt;内容&gt;。</p>
+  <div id="log">waiting...</div>
+</div>
+<script>
+  const ed = document.getElementById('ed')
+  const log = document.getElementById('log')
+  let n = 0
+  ed.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      const text = ed.innerText.trim()
+      n += 1
+      document.title = 'CW-RECV:' + text.slice(0, 60)
+      log.textContent += 'RECV#' + n + '=' + text + '\n'
+      ed.innerText = ''
+    }
+  })
+  // 真实聊天应用的行为：窗口获得焦点时把光标放回输入框。
+  // （注意：**不要**在 document 上挂 click→focus——那样监工"点击对话区以便 Ctrl+A 复制对话记录"
+  //   的读取策略会被夹具自己破坏；这是夹具要多担一份真实性的地方。）
+  ed.focus()
+  window.addEventListener('focus', () => ed.focus())
+</script>
+</body>
+</html>

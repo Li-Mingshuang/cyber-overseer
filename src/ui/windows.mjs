@@ -97,6 +97,17 @@ export function createWindowsDriver(opts = {}) {
     uiaElements: async (hwnd, o = {}) => (await call('uia-elements', { hwnd, ...o }, o)).elements ?? [],
     uiaFocus: (hwnd, o = {}) => call('uia-focus-element', { hwnd, ...o }, o),
     whoamiWindow: (o) => call('whoami-window', {}, o),
+
+    // ---- 截图与 OCR（Windows 自带 Windows.Media.Ocr，零依赖）----
+    // 定位：**辅助**通道。截图的"位置信息"有用（哪里是输入框/按钮），
+    // 但 OCR 的**文本保真度**在真实中文界面上很差（实测见 docs/OCR.md），
+    // 所以读对话内容仍然优先用磁盘会话与剪贴板。
+    /** 截取窗口（不抢焦点）。Chromium/Electron 必须用 flag=2，驱动会自动处理并检测黑屏。 */
+    capture: (hwnd, o = {}) => call('capture', { hwnd, dir: o.dir, ...o }, { timeoutMs: o.timeoutMs ?? 30000, signal: o.signal }),
+    /** 对图片做 OCR（给 file）或"截图并识别"（给 hwnd）。返回每行文本 + 每个词的精确矩形。 */
+    ocr: (o = {}) => call('ocr', { file: o.file, hwnd: o.hwnd, dir: o.dir, lang: o.lang }, { timeoutMs: o.timeoutMs ?? 60000, signal: o.signal }),
+    /** 这台机器可用的 OCR 语言，以及默认/中文引擎能否建立。 */
+    ocrLanguages: (o) => call('ocr-languages', {}, o),
     sleep,
   }
 }

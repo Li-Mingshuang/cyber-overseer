@@ -33,6 +33,8 @@
 - [x] dsh 的 ACP 通道：真实握手实测通过（`node scripts/verify-acp.mjs`，零 token）
 - [ ] dsh 的 ACP prompt 通路实测（需要花真实额度，留给主人决定）
 - [ ] dsh 的 SDK JSON-RPC 通道（协议已摸清，见 docs/recon/dsh-control-surfaces.md §4.6）
+- [ ] human-sim 读回强化：把"输入框抢占焦点导致 Ctrl+A 选不到对话记录"彻底解决
+      （候选：读前用 Esc/点击把焦点移出输入框、按消息块滚动截图 OCR 兜底、优先 readerAdapter 读磁盘）
 - [ ] human-sim：macOS（osascript）与 Linux（xdotool）驱动
 - [ ] 多 agent 并行监工（一个监工进程管多个会话）
 - [ ] `cw status --watch`：终端里的实时面板

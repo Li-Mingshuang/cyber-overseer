@@ -48,6 +48,16 @@ for (const file of files) {
     if (/\bmodule\.exports\b/.test(text)) problems.push(`${rel}: ESM 模块里出现了 module.exports`)
     if (/\bconsole\.log\s*\(/.test(text)) problems.push(`${rel}: 直接用了 console.log（请走 util/log.mjs 的 logger）`)
   }
+
+  // PowerShell 脚本必须带 UTF-8 BOM：Windows PowerShell 5.1 没有 BOM 时会按系统 ANSI（中文机器是 GBK）
+  // 读取，中文注释变乱码后可能吞掉引号，直接导致"看着正常、一跑就语法错误"。这个坑踩过两次。
+  if (file.endsWith('.ps1')) {
+    const first = readFileSync(file).subarray(0, 3)
+    const hasBom = first[0] === 0xef && first[1] === 0xbb && first[2] === 0xbf
+    if (!hasBom) {
+      problems.push(`${rel}: .ps1 缺少 UTF-8 BOM（Windows PowerShell 5.1 会把中文读成乱码）——跑 \`node scripts/fix-ps1-bom.mjs\` 修复`)
+    }
+  }
   if (rel === 'src/cli.mjs' && /process\.stdout\.write\(\s*JSON\.stringify\(result\.output/.test(text)) {
     // 这是钩子契约里**唯一**允许直接写 stdout 的地方，留个提醒注释即可
   }

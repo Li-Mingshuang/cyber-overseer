@@ -1,4 +1,4 @@
-<#
+﻿<#
  赛博监工 · Windows 拟人驱动
 
  这是"模拟人类"通道的底层执行者：列窗口、看主人是否在休息、抢焦点、点输入框、
@@ -215,6 +215,133 @@ function Format-Window([IntPtr]$h) {
 
 Add-Type -AssemblyName System.Windows.Forms
 
+# ---------------------------------------------------------------------------
+# 截图（PrintWindow，**不抢焦点**）与 OCR（Windows 自带 Windows.Media.Ocr，零依赖）
+#
+# 实测要点（见 docs/OCR.md）：
+#   · PrintWindow 的 flag=0 对 Chromium/Electron 截出来是**全黑**，必须用 flag=2
+#     （PW_RENDERFULLCONTENT）；所以我们先试 2 再试 0，并用像素方差判断是否黑屏。
+#   · OCR 引擎按语言创建：中文（zh-Hans-CN）在部分机器上建不起来，此时返回可用语言列表，
+#     让调用方知道"这台机器只能识别英文"——OCR 在本项目里定位为**辅助**通道。
+Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
+
+$capCs = @'
+using System;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
+
+public class CWCap {
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT r);
+  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+
+  // 返回 "ok|file|w|h|flag|mean|std|blank" 或 "err|原因"（PS 侧再包成 JSON，避免手写 JSON 转义）
+  public static string Capture(IntPtr hWnd, string file) {
+    RECT rc;
+    if (!GetWindowRect(hWnd, out rc)) return "err|GetWindowRect 失败";
+    int w = rc.Right - rc.Left;
+    int h = rc.Bottom - rc.Top;
+    if (w <= 0 || h <= 0) return "err|窗口尺寸为空 " + w + "x" + h;
+    uint[] flags = new uint[] { 2, 0 };   // 先 PW_RENDERFULLCONTENT（Chromium 必需），再退回整窗
+    foreach (uint f in flags) {
+      try {
+        using (Bitmap bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb)) {
+          using (Graphics g = Graphics.FromImage(bmp)) {
+            IntPtr hdc = g.GetHdc();
+            bool ok = PrintWindow(hWnd, hdc, f);
+            g.ReleaseHdc(hdc);
+            if (!ok) continue;
+          }
+          int stepX = Math.Max(1, w / 80), stepY = Math.Max(1, h / 80);
+          double sum = 0, sum2 = 0; int n = 0;
+          for (int y = 0; y < h; y += stepY) {
+            for (int x = 0; x < w; x += stepX) {
+              Color c = bmp.GetPixel(x, y);
+              double v = (c.R + c.G + c.B) / 3.0;
+              sum += v; sum2 += v * v; n++;
+            }
+          }
+          double mean = n > 0 ? sum / n : 0;
+          double std = n > 0 ? Math.Sqrt(Math.Max(0, (sum2 / n) - (mean * mean))) : 0;
+          bmp.Save(file, ImageFormat.Png);
+          return "ok|" + file + "|" + w + "|" + h + "|" + f + "|" + ((int)mean) + "|" + ((int)std) + "|" + (std < 3 ? "1" : "0");
+        }
+      } catch (Exception e) {
+        if (f == 0) return "err|" + e.Message;
+      }
+    }
+    return "err|所有 flag 的 PrintWindow 都失败";
+  }
+}
+'@
+Add-Type -TypeDefinition $capCs -ReferencedAssemblies System.Drawing
+
+$script:OcrReady = $false
+function Initialize-Ocr {
+  if ($script:OcrReady) { return }
+  Add-Type -AssemblyName System.Runtime.WindowsRuntime -ErrorAction SilentlyContinue
+  $script:OcrAsTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
+      $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1'
+    })[0]
+  $script:OcrType = [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType = WindowsRuntime]
+  $null = [Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime]
+  $null = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics.Imaging, ContentType = WindowsRuntime]
+  # 关键：按语言建引擎要用到 Windows.Globalization.Language；不预先加载这个 WinRT 类型会报
+  # "找不到类型 [Windows.Globalization.Language]"，看起来像"这台机器不支持中文 OCR"（踩过）
+  $null = [Windows.Globalization.Language, Windows.Globalization, ContentType = WindowsRuntime]
+  $script:OcrReady = $true
+}
+function Await-Ocr($op, $type) {
+  $task = $script:OcrAsTask.MakeGenericMethod($type).Invoke($null, @($op))
+  $task.Wait(-1) | Out-Null
+  $task.Result
+}
+function Get-OcrLanguages {
+  Initialize-Ocr
+  return @([Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages | ForEach-Object { $_.LanguageTag })
+}
+function Get-OcrEngine([string]$tag) {
+  Initialize-Ocr
+  if (-not $tag) { return [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages() }
+  $lang = [Windows.Globalization.Language]::new($tag)
+  return [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage($lang)
+}
+function Invoke-OcrFile([string]$file, [string]$tag) {
+  $engine = Get-OcrEngine $tag
+  if ($null -eq $engine) { return $null }
+  $storage = Await-Ocr ([Windows.Storage.StorageFile]::GetFileFromPathAsync($file)) ([Windows.Storage.StorageFile])
+  $stream = Await-Ocr ($storage.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+  $decoder = Await-Ocr ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+  $bitmap = Await-Ocr ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+  $result = Await-Ocr ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+  $stream.Dispose()
+  $lines = @()
+  foreach ($line in $result.Lines) {
+    $words = @()
+    foreach ($word in $line.Words) {
+      $words += [pscustomobject]@{
+        text = $word.Text
+        x    = [int]$word.BoundingRect.X
+        y    = [int]$word.BoundingRect.Y
+        w    = [int]$word.BoundingRect.Width
+        h    = [int]$word.BoundingRect.Height
+      }
+    }
+    $first = $line.Words | Select-Object -First 1
+    $lines += [pscustomobject]@{
+      text  = $line.Text
+      x     = [int]$first.BoundingRect.X
+      y     = [int]$first.BoundingRect.Y
+      words = $words
+    }
+  }
+  return @{
+    engine = $engine.RecognizerLanguage.LanguageTag
+    lines  = $lines
+  }
+}
+
 switch ($Command.ToLowerInvariant()) {
   'idle' {
     Out-Json @{ ok = $true; idleMs = [CW]::IdleMs() }
@@ -397,6 +524,83 @@ switch ($Command.ToLowerInvariant()) {
     $h = [CW]::WindowFromPoint($p)
     $root = [CW]::GetAncestor($h, 2)
     Out-Json @{ ok = $true; x = $p.X; y = $p.Y; underCursor = (Format-Window $h); root = (Format-Window $root) }
+  }
+
+  'capture' {
+    # 截取指定窗口（不抢焦点）。返回文件路径、尺寸、以及"是否黑屏"的判据（像素方差）。
+    $h = [IntPtr][int64]$script:Payload.hwnd
+    if (-not [CW]::IsWindow($h)) { Out-Json @{ ok = $false; error = 'invalid hwnd' }; break }
+    $dir = if ($script:Payload.dir) { [string]$script:Payload.dir } else { [System.IO.Path]::GetTempPath() }
+    $file = Join-Path $dir ("cw-window-" + $h.ToInt64().ToString('X') + ".png")
+    $raw = [CWCap]::Capture($h, $file)
+    $parts = $raw -split '\|'
+    if ($parts[0] -ne 'ok') { Out-Json @{ ok = $false; error = $parts[1] }; break }
+    Out-Json @{
+      ok     = $true
+      file   = $parts[1]
+      width  = [int]$parts[2]
+      height = [int]$parts[3]
+      flag   = [int]$parts[4]
+      mean   = [int]$parts[5]
+      std    = [int]$parts[6]
+      blank  = ($parts[7] -eq '1')
+      window = (Format-Window $h)
+    }
+  }
+
+  'ocr-languages' {
+    try {
+      $langs = Get-OcrLanguages
+      $engine = Get-OcrEngine $null
+      Out-Json @{
+        ok        = $true
+        languages = $langs
+        engine    = $(if ($engine) { $engine.RecognizerLanguage.LanguageTag } else { $null })
+        chineseOk = ($null -ne (Get-OcrEngine 'zh-Hans-CN'))
+      }
+    } catch { Out-Json @{ ok = $false; error = $_.Exception.Message } }
+  }
+
+  'ocr' {
+    # 对一张图片做 OCR（或先截图再识别：给 hwnd 即可）。返回每行文本 + 每个词的精确矩形。
+    $file = [string]$script:Payload.file
+    if (-not $file -and $script:Payload.hwnd) {
+      $h = [IntPtr][int64]$script:Payload.hwnd
+      $dir = if ($script:Payload.dir) { [string]$script:Payload.dir } else { [System.IO.Path]::GetTempPath() }
+      $file = Join-Path $dir ("cw-window-" + $h.ToInt64().ToString('X') + ".png")
+      $raw = [CWCap]::Capture($h, $file)
+      if (($raw -split '\|')[0] -ne 'ok') { Out-Json @{ ok = $false; error = ($raw -split '\|')[1] }; break }
+    }
+    if (-not $file -or -not (Test-Path $file)) { Out-Json @{ ok = $false; error = "找不到图片：$file" }; break }
+    # WinRT 的 GetFileFromPathAsync 只接受**绝对路径**，相对路径/重复分隔符都会报"参数错误"（踩过）
+    $file = [System.IO.Path]::GetFullPath($file)
+    try {
+      $sw = [Diagnostics.Stopwatch]::StartNew()
+      $result = Invoke-OcrFile $file ([string]$script:Payload.lang)
+      $sw.Stop()
+      if ($null -eq $result) {
+        Out-Json @{
+          ok        = $false
+          error     = "OCR 引擎创建失败（lang='$($script:Payload.lang)'）；这台机器可用的识别语言见 languages"
+          languages = (Get-OcrLanguages)
+        }
+        break
+      }
+      Out-Json @{
+        ok      = $true
+        file    = $file
+        engine  = $result.engine
+        ms      = $sw.ElapsedMilliseconds
+        lines   = $result.lines
+        text    = (($result.lines | ForEach-Object { $_.text }) -join "`n")
+      }
+    } catch {
+      # OCR 的异常经常裹在 Wait 的 AggregateException 里，把内层原因挖出来，否则没法排查
+      $msg = $_.Exception.Message
+      $inner = $_.Exception.InnerException
+      while ($inner) { $msg = "$msg ← $($inner.Message)"; $inner = $inner.InnerException }
+      Out-Json @{ ok = $false; error = $msg; file = $file }
+    }
   }
 
   default {

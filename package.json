@@ -41,6 +41,9 @@
     "demo:reset": "node examples/lazy-agent/reset.mjs",
     "doctor": "node bin/cw.mjs doctor",
     "verify:acp": "node scripts/verify-acp.mjs",
+    "verify:human-sim": "node scripts/verify-human-sim.mjs",
+    "verify:ocr": "node scripts/verify-ocr.mjs",
+    "fix:ps1-bom": "node scripts/fix-ps1-bom.mjs",
     "lint": "node scripts/lint.mjs"
   },
   "dependencies": {},
