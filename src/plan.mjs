@@ -178,7 +178,18 @@ function toItems(sectionText) {
   return items
 }
 
-function parseMarkers(text) {
+/**
+ * 解析 `<!-- CW:XXX ... -->` 标记。
+ *
+ * ⚠️ 语义要点：这些标记**应该来自 agent 的回答**（它在回答里宣告完成/受阻），
+ * 而不是方案文档——方案文档里常常有"教 agent 怎么写标记"的说明文字，
+ * 若拿方案文档去匹配，就会把说明文字误当成真标记（真实踩到过：
+ * 自动生成的方案里写了 `<!-- CW:BLOCKED 原因 -->`，监工立刻判定"agent 受阻"）。
+ *
+ * @param {string} text
+ * @returns {{done:boolean, blocked:boolean, blockedReason:string|null, notes:string[]}}
+ */
+export function parseMarkers(text) {
   const result = { done: false, blocked: false, blockedReason: null, notes: [] }
   for (const m of text.matchAll(MARKER_RE)) {
     const key = m[1].toUpperCase()

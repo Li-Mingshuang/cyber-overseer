@@ -33,17 +33,64 @@
 
 ## 60 秒上手
 
-**最省事的方式：开图形界面**（本地 Web UI，零依赖、只监听 127.0.0.1）：
+**一句话起步（推荐，零配置）**——就像你对 agent 说话那样：
 
 ```bash
-node /path/to/cyber-overseer/bin/cw.mjs ui
+cd <你的项目>
+node /path/to/cyber-overseer/bin/cw.mjs "把登录页改成深色主题并跑通测试"
 ```
 
-浏览器会自动打开，页面上四件事一次做完：**① 选项目目录 → ② 写方案文档 → ③ 选 agent 与验收命令 →
-④ 点「开始监工」**，右边实时显示每一轮判定、抽出去的鞭子原文、验收命令结果和最终报告。
-想先看效果就点「演练」（只判定、不注入）。
+它自己决定这些事，并打印给你看：
 
-命令行方式（等价）：
+```
+一句话起步 · 我决定这么干
+  监工谁：dsh（会话 session-89016627…） — 接着这个项目里已有的 DSH 会话，用 HTTP 注入到同一段对话
+  验收：npm test（从 package.json 猜的）
+  方案：<项目>/.cyber/PLAN.md（想改随时改，监工每轮重读）
+  护栏：最多抽 10 鞭，连续 3 轮无进展就停
+```
+
+然后它就开始盯：判定 → 抽鞭 → 再判定，直到验收全绿并收工，或者卡死/需要人时停下写报告。
+想只生成不跑：加 `--plan-only`；想换 agent：`--agent codex`；想接着某个会话：`--session <id>`。
+
+**看有哪些 agent 会话还活着**：
+
+```bash
+node /path/to/cyber-overseer/bin/cw.mjs sessions --live
+```
+
+```
+dsh 的会话（14/65，只看活跃）
+  ● 正在跑          刚刚   session-d855a1fb…  虚拟3D世界Agent桌面工具      1 回合｜1501 事件
+  ▲ 等你回话        刚刚   session-2ae6a4f1…  Windows端查看iPhone实况照片…  38 回合｜20343 事件
+  ○ 空闲（在等人）   3 分钟前 session-d51beb5f…  本地图片转简笔画工具推荐     1 回合
+```
+
+**图形界面**（想看得清楚时用）：`cw ui`，见下文「图形界面」一节。
+
+## 一句话起步（零配置）
+
+用户的原话是：*"我叫 agent 干活都是说一句话，搞个监工代替我劳动还要配这配那"*。所以：
+
+```bash
+cw "把 artifacts 下那四份产物做完"          # 等价于 cw do "…"
+```
+
+它自动做四件事：
+
+| 自动决策 | 依据 |
+|---|---|
+| **监工谁** | 优先 DSH；若这个项目里已有 DSH 会话且界面服务在跑 → 用 `POST /api/session.prompt` **接着那段对话**（像真人接着聊），否则 `headless` 起干净劳工；没 DSH 就按 codex → opencode → cursor → … 挑本机可用的 |
+| **验收命令** | 嗅探 `package.json`（test/lint/typecheck/build）、`pnpm/yarn.lock`、`pyproject.toml`、`pytest.ini`、`Cargo.toml`、`go.mod`、`Makefile`、`verify.mjs` |
+| **方案文档** | 一句话当目标 + 验收命令当验收标准，写进 `<项目>/.cyber/PLAN.md`（**不碰**你项目根的 PLAN.md）；想改随时改，监工每轮重读 |
+| **判定策略** | 零配置模式：**验收命令全绿** + agent 的完成宣告（`CW:DONE`）+ 卡死检测。没有全绿就绝不判完成；全绿但没宣告会先要求它自查一次，问过之后仍全绿才收工 |
+
+常用开关：`--plan-only`（只生成方案不跑）· `--agent codex` · `--session <id>` · `--cmd "node agent.mjs {text}"`
+（任意命令行 agent）· `--verify "npm test;npm run lint"` · `--max-rounds 8` · `--no-join`（不插进活会话）。
+
+复现同一次监工：它会写一份 `<项目>/.cyber/auto.config.json`，`cw run --config .cyber/auto.config.json` 即可。
+
+## 命令行完整流程
 
 ```bash
 # 1）把仓库放到任意位置，零依赖、不需要 npm install
@@ -176,11 +223,13 @@ node bin/cw.mjs run --config examples/lazy-agent/cw.config.mjs
 ## 命令
 
 ```text
-cw ui                打开本地图形界面（推荐日常用；只监听 127.0.0.1）
-cw init              生成 cw.config.mjs + PLAN.md + .cyber/
-cw doctor            环境自检（Node 能力 / 各 agent / UI 通道 / 判定器 / 验收命令）
+cw "<一句话目标>"     一句话起步：自动选 agent / 猜验收命令 / 生成方案 / 直接开跑
+cw sessions --live   看有哪些 agent 会话还活着（正在跑 / 等回话 / 空闲）
+cw ui                打开本地图形界面（想看得清楚时用；只监听 127.0.0.1）
+cw init              生成 cw.config.mjs + PLAN.md + .cyber/（要精细控制时才需要）
+cw doctor            环境自检（Node 能力 / 各 agent / UI 通道 / OCR 引擎 / 判定器 / 验收命令）
 cw adapters          适配器能力矩阵
-cw sessions          列出可监工的会话
+cw sessions          列出可监工的会话（--adapter codex / --live）
 cw windows           列出当前窗口（拟人通道选目标用）
 cw run               开始监工（默认命令）
 cw watch             演练：只判定不抽鞭

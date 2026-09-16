@@ -70,11 +70,44 @@ test('规则判定：全部勾选但没有验收命令 → needs-human（宁可�
   assert.match(verdict.reason, /没有可执行的验收命令/)
 })
 
-test('规则判定：显式 CW:BLOCKED → blocked', () => {
-  const blocked = parsePlan('# T\n<!-- CW:BLOCKED 缺少 API key -->')
-  const verdict = ruleJudge({ ...baseInput(), plan: blocked, progress: planProgress(blocked) }, {})
+test('规则判定：显式 CW:BLOCKED（来自回答）→ blocked', () => {
+  const blocked = parsePlan('# T\n- [ ] a\n')
+  const verdict = ruleJudge({ ...baseInput(), plan: blocked, progress: planProgress(blocked), answer: '做不下去了 <!-- CW:BLOCKED 缺少 API key -->' }, {})
   assert.equal(verdict.status, 'blocked')
   assert.match(verdict.reason, /缺少 API key/)
+})
+
+test('规则判定：方案文档里的"标记说明文字"不算 agent 宣告（防误判）', () => {
+  // 自动生成的方案里会写"教 agent 怎么写标记"的说明；若拿方案去匹配，会把说明当成真标记
+  const plan = parsePlan([
+    '# 目标',
+    '## 验收标准',
+    '- npm test 通过',
+    '## 约定',
+    '- 做完写上 <!-- CW:DONE -->',
+    '- 卡住写上 <!-- CW:BLOCKED 原因 -->',
+  ].join('\n'))
+  const progress = planProgress(plan)
+  const evidence = { verify: [{ command: 'npm test', ok: true, code: 0 }], answerHash: 'h', fingerprint: 'f' }
+
+  const verdict = ruleJudge({ ...baseInput(), plan, progress, answer: '我做了不少事，但没写任何标记。', evidence }, {})
+  assert.notEqual(verdict.status, 'blocked', '方案里的说明文字不该被当成 agent 受阻')
+  assert.equal(verdict.status, 'continue', '验收全绿但没宣告 → 先要求 agent 确认一次')
+  assert.equal(verdict.details.awaitingDoneMarker, true)
+
+  // 回答里真写了标记 → 收工
+  const withMarker = ruleJudge({ ...baseInput(), plan, progress, answer: '都做完了 <!-- CW:DONE -->', evidence }, {})
+  assert.equal(withMarker.status, 'done')
+})
+
+test('零配置模式：验收全绿 + 已问过一次 → 收工（不再无限要求宣告）', () => {
+  const plan = parsePlan('# 目标\n## 验收标准\n- npm test 通过\n')
+  const progress = planProgress(plan)
+  const evidence = { verify: [{ command: 'npm test', ok: true, code: 0 }], answerHash: 'h2', fingerprint: 'f2' }
+  const history = [{ round: 1, verdict: { status: 'continue', details: { awaitingDoneMarker: true } }, answerHash: 'h1', fingerprint: 'f1' }]
+  const verdict = ruleJudge({ ...baseInput(), plan, progress, answer: '做完了（没写标记）', evidence, history }, { acceptVerifyGreenAfterAsks: 1 })
+  assert.equal(verdict.status, 'done')
+  assert.equal(verdict.details.verifyGreenWithoutMarker, true)
 })
 
 test('规则判定：方案没有任何结构 → needs-human 并给出建议', () => {

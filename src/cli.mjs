@@ -89,6 +89,15 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (overrides.runtime?.dryRun) log.warn('演练模式：只判定不抽鞭')
 
+  // 「一句话起步」：第一个词不是命令时，把整句当作目标 —— `cw "把登录页改成深色主题并跑通测试"`
+  const COMMANDS = new Set([
+    'help', 'version', 'init', 'doctor', 'adapters', 'sessions', 'windows', 'judge', 'whip',
+    'status', 'report', 'pause', 'resume', 'hooks', 'hook', 'mcp', 'ui', 'web', 'run', 'watch', 'do',
+  ])
+  if (!COMMANDS.has(command)) {
+    return cmdQuick({ log, cwd, sentence: positional.join(' '), flags })
+  }
+
   switch (command) {
     case 'help': printHelp(log); return 0
     case 'version': log.raw(await version()); return 0
@@ -98,6 +107,7 @@ export async function main(argv = process.argv.slice(2)) {
     case 'sessions': return cmdSessions({ log, config, cwd, agentCwd, flags })
     case 'windows': return cmdWindows({ log, config, agentCwd })
     case 'judge': return cmdJudge({ log, config, cwd, planPath, agentCwd, flags })
+    case 'do': return cmdQuick({ log, cwd, sentence: positional.slice(1).join(' '), flags })
     case 'whip': return cmdWhip({ log, config, cwd, planPath, agentCwd, positional, flags })
     case 'status': return cmdStatus({ log, config, cwd })
     case 'report': return cmdReport({ log, config, cwd })
@@ -395,12 +405,51 @@ async function cmdSessions({ log, config, cwd, agentCwd, flags }) {
   const probe = await adapter.probe()
   if (!probe.ok) { log.error(`${adapterId} 不可用：${probe.reason}`); return 1 }
   const sessions = await adapter.listSessions()
-  log.banner(`${adapterId} 的会话（${sessions.length} 个）`)
-  for (const session of sessions.slice(0, Number(flags.limit ?? 30))) {
-    const when = session.updatedAt ? new Date(session.updatedAt).toLocaleString('zh-CN', { hour12: false }) : '?'
-    log.raw(`  ${String(session.id).padEnd(42)} ${when}  ${oneLine(session.title ?? session.cwd ?? '', 60)}`)
+  const limit = Number(flags.limit ?? 25)
+  const liveOnly = flags.live === true
+
+  // "还活着"的判据：最近 30 分钟内有更新，或者状态本身就是"在跑/等人"
+  const now = Date.now()
+  const ACTIVE = new Set(['working', 'awaiting-approval', 'awaiting-input'])
+  const isLive = (s) => ACTIVE.has(s.status) || (s.updatedAt && now - s.updatedAt < 30 * 60 * 1000)
+  const rows = (liveOnly ? sessions.filter(isLive) : sessions).slice(0, limit)
+  if (!rows.length) { log.warn(`没有${liveOnly ? '活跃的' : ''}会话`); return 0 }
+
+  const STATUS_LABEL = {
+    working: '● 正在跑',
+    idle: '○ 空闲（在等人）',
+    'awaiting-approval': '▲ 等审批',
+    'awaiting-input': '▲ 等你回话',
+    error: '✖ 出错停止',
+    unknown: '· 未知',
   }
+  log.banner(`${adapterId} 的会话（${rows.length}/${sessions.length}${liveOnly ? '，只看活跃' : ''}）`)
+  for (const s of rows) {
+    const when = s.updatedAt ? relativeTime(now - s.updatedAt) : '?'
+    const status = STATUS_LABEL[s.status] ?? `· ${s.status ?? '?'}`
+    const live = isLive(s) ? '' : '  （久未活动）'
+    log.raw(`  ${status.padEnd(14)} ${when.padStart(8)}  ${String(s.id).slice(0, 40)}`)
+    const title = oneLine(s.title ?? '(无标题)', 52)
+    log.raw(`      ${title}`)
+    if (s.cwd) log.raw(`      ${oneLine(s.cwd, 90)}`)
+    const extra = []
+    if (s.turnCount !== undefined && s.turnCount !== null) extra.push(`${s.turnCount} 回合`)
+    if (s.raw?.eventCount) extra.push(`${s.raw.eventCount} 事件`)
+    if (extra.length) log.raw(`      ${extra.join('｜')}${live ? '' : live}`)
+  }
+  log.raw('')
+  log.raw('想监工其中某个：cw run --session <会话id>；只看活跃的：cw sessions --live')
   return 0
+}
+
+/** 人类可读的相对时间。 */
+function relativeTime(ms) {
+  const minutes = Math.round(ms / 60000)
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes} 分钟前`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours} 小时前`
+  return `${Math.round(hours / 24)} 天前`
 }
 
 /** cw windows */
@@ -583,6 +632,55 @@ async function cmdMcp({ log, config, cwd, flags }) {
   return 0
 }
 
+/**
+ * 一句话起步：`cw "把登录页改成深色主题并跑通测试"`。
+ *
+ * 不要求用户写配置、写方案、配验收命令——这些都自动决定并**打印出来**，
+ * 不满意可以用 `--plan-only` 只生成不跑，或者直接去改 `.cyber/PLAN.md`（监工每轮重读）。
+ */
+async function cmdQuick({ log, cwd, sentence, flags }) {
+  const { prepareQuickRun, describeQuickRun } = await import('./quick.mjs')
+  if (!sentence || !sentence.trim()) {
+    log.error('用法：cw "<一句话目标>"   例如：cw "把登录页改成深色主题并跑通测试"')
+    log.raw('可选：--agent dsh|codex|opencode|cursor  --session <id>  --max-rounds 8  --no-join  --plan-only')
+    return 2
+  }
+
+  const prepared = await prepareQuickRun({
+    sentence,
+    cwd,
+    log,
+    preferAgent: typeof flags.agent === 'string' ? flags.agent : (typeof flags.adapter === 'string' ? flags.adapter : undefined),
+    session: typeof flags.session === 'string' ? flags.session : undefined,
+    maxRounds: flags['max-rounds'],
+    joinWeb: flags['no-join'] !== true,
+    verify: typeof flags.verify === 'string' ? String(flags.verify).split(';').map(s => s.trim()).filter(Boolean) : undefined,
+    quietHours: flags['quiet-hours'] === false ? null : undefined,
+    command: typeof flags.cmd === 'string' ? String(flags.cmd).split(' ').filter(Boolean) : undefined,
+  })
+
+  log.banner('一句话起步 · 我决定这么干')
+  for (const line of describeQuickRun(prepared)) log.raw(`  ${line}`)
+  log.raw(`  护栏：最多抽 ${prepared.config.guard.maxRounds} 鞭，连续 ${prepared.config.guard.maxStallRounds} 轮无进展就停`)
+  log.raw(`  想改配置：${prepared.configFile}`)
+
+  if (flags['plan-only'] === true || flags['dry-run'] === true) {
+    log.raw('')
+    log.ok(`只生成不运行（--plan-only）。方案已写好：${prepared.planPath}`)
+    log.raw(`下一步：cw run --config "${prepared.configFile}"`)
+    return 0
+  }
+
+  const result = await runOverseer({
+    config: prepared.config,
+    cwd,
+    planPath: prepared.planPath,
+    agentCwd: cwd,
+    log,
+    resume: flags.fresh !== true,
+  })
+  return result.exitCode ?? EXIT_CODES[result.stopReason] ?? 0
+}
 /**
  * cw ui —— 本地 Web 界面（零依赖，只监听 127.0.0.1）。
  *

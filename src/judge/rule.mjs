@@ -18,6 +18,7 @@
  */
 
 import { oneLine } from '../util/text.mjs'
+import { parseMarkers } from '../plan.mjs'
 import { normalizeVerdict } from './types.mjs'
 
 export const id = 'rule'
@@ -53,10 +54,14 @@ export function ruleJudge(input, opts = {}) {
   const verifyFailed = evidence?.verify?.filter(v => !v.ok) ?? []
   const verifyRan = (evidence?.verify?.length ?? 0) > 0
   const verifyAllPass = verifyRan && verifyFailed.length === 0
+  // 显式标记只认 **agent 的回答**里的：方案文档里会有"教 agent 怎么写标记"的说明文字，
+  // 拿方案去匹配会把说明当成真标记（真实踩到过）。
+  const markers = parseMarkers(String(answer ?? ''))
+  const planClaimedDone = plan?.explicit?.done === true && input.config?.judge?.rule?.trustPlanMarker === true
 
-  // 1) agent 明确宣告受阻
-  if (plan?.explicit?.blocked) {
-    return verdict('blocked', `agent 显式宣告受阻：${oneLine(plan.explicit.blockedReason ?? '未说明')}`, null, 0.85)
+  // 1) agent 明确宣告受阻（来自回答）
+  if (markers.blocked) {
+    return verdict('blocked', `agent 显式宣告受阻：${oneLine(markers.blockedReason ?? '未说明')}`, null, 0.85)
   }
 
   // 2) 卡死检测（放在"还有待办"之前）：连续几轮回答与证据都没变，
@@ -91,7 +96,7 @@ export function ruleJudge(input, opts = {}) {
       return verdict('done', `方案 ${plan.doneCount}/${plan.totalCount} 项全部完成，且 ${evidence.verify.length} 条验收命令全部通过`, null, 0.97)
     }
     if (!verifyRan) {
-      if (trustAgentDone && plan.explicit?.done) {
+      if (trustAgentDone && (markers.done || planClaimedDone)) {
         return verdict('done', 'agent 显式宣告完成（配置允许信任自述），清单已全部勾选', null, 0.6)
       }
       return verdict(
@@ -104,15 +109,52 @@ export function ruleJudge(input, opts = {}) {
     }
   }
 
-  // 6) 无法判定
+  // 6) 无法判定（没有任何结构）
   if (progress?.undecidable || (plan?.totalCount === 0 && plan?.acceptance?.length === 0)) {
     return verdict('needs-human', '方案文档里既没有可勾选的待办清单，也没有验收标准，规则判定无从下手', null, 0.3, {
       hint: '在方案文档里加一段 `## 验收标准` 的列表，或加上 `- [ ] 任务` 复选框',
     })
   }
 
-  // 7) 有验收标准但无清单：只能依赖模型或人
-  return verdict('needs-human', `有 ${plan?.acceptance?.length ?? 0} 条验收标准但没有待办清单，规则判定无法逐项核对`, null, 0.35)
+  // 7) 零配置模式：有验收标准但没有任务清单（`cw "一句话"` 自动生成的方案就是这样）
+  //
+  //    用户不想为了"让监工盯一下"去手写复选框，所以这里改用三样东西判定：
+  //      ① 验收命令全绿（硬证据）  ② agent 的显式宣告 `<!-- CW:DONE -->`  ③ 卡死检测（上面已处理）
+  //    仍然不轻信自述：没有全绿的验收命令就绝不判 done；全绿了但 agent 没宣告，会先问一次，
+  //    问过之后仍全绿才收工（避免把"跑完测试但其实还有活"的情况误判，也避免永远卡在等人宣告）。
+  if (plan?.acceptance?.length) {
+    if (verifyRan && verifyAllPass) {
+      if (markers.done || planClaimedDone) {
+        return verdict('done', `验收命令全部通过，且 agent 显式宣告完成（共 ${plan.acceptance.length} 条验收标准）`, null, 0.92)
+      }
+      const askedBefore = (history ?? []).filter(h => h.verdict?.details?.awaitingDoneMarker).length
+      const acceptAfterAsks = opts.acceptVerifyGreenAfterAsks ?? 1
+      if (askedBefore >= acceptAfterAsks) {
+        return verdict(
+          'done',
+          `验收命令全部通过，且已要求 agent 确认过一次没有额外未完成项 → 收工（如果不对，请在方案里补上任务清单）`,
+          null, 0.7, { verifyGreenWithoutMarker: true },
+        )
+      }
+      return verdict(
+        'continue',
+        `验收命令全部通过；请 agent 自查是否还有未完成项并明确宣告`,
+        '验收命令都过了，很好。请再自己检查一遍是否有遗漏（边界情况、报错分支、文档/示例），'
+        + '若确实都做完了，请在回答里写上 `<!-- CW:DONE -->`；若还有没做的，直接继续做完。',
+        0.75, { awaitingDoneMarker: true },
+      )
+    }
+    if (!verifyRan) {
+      if (trustAgentDone && (markers.done || planClaimedDone)) {
+        return verdict('done', 'agent 显式宣告完成（配置允许信任自述），但没有验收命令可核对', null, 0.55)
+      }
+      return verdict('needs-human', `方案有 ${plan.acceptance.length} 条验收标准，但没有可执行的验收命令来证明结果`, null, 0.45, {
+        hint: '在 cw.config.mjs 的 evidence.verify 里加一条能跑的命令（例如 npm test）',
+      })
+    }
+  }
+
+  return verdict('needs-human', '规则判定无法决定（既没有清单也没有可核对的验收命令）', null, 0.35)
 }
 
 /**
