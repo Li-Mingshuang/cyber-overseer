@@ -19,7 +19,54 @@ import { humanDuration, isoLocal } from '../util/time.mjs'
 export const EVENT_KINDS = [
   'start', 'probe', 'session', 'wait', 'round', 'evidence', 'verdict', 'whip', 'inject',
   'guard', 'pause', 'stop', 'done', 'blocked', 'needs-human', 'error', 'notify', 'report',
+  'multi-start', 'multi-stop', 'plan-contract',
 ]
+
+/**
+ * 收集"验收命令的历史"：每条命令在每一轮的结果。
+ *
+ * 只看最后一次是看不出"从红到绿"的——而主人复盘时最想知道的就是"它到底把测试跑绿了吗，
+ * 还是最后一次碰巧没跑到"。所以按命令聚合出每一轮的结果。
+ * @param {any[]} rounds
+ */
+export function verifyHistory(rounds = []) {
+  const byCommand = new Map()
+  for (const round of rounds) {
+    for (const result of round?.verify ?? []) {
+      if (!byCommand.has(result.command)) byCommand.set(result.command, [])
+      byCommand.get(result.command).push({
+        round: round.round, ok: Boolean(result.ok), code: result.code ?? null, cached: Boolean(result.cached),
+      })
+    }
+  }
+  return [...byCommand.entries()].map(([command, cells]) => ({
+    command,
+    cells,
+    everFailed: cells.some(c => !c.ok),
+    finallyOk: cells.length ? cells.at(-1).ok : null,
+  }))
+}
+
+/** 报告里的"验收命令历史"表格（没有数据时返回空数组）。 */
+export function renderVerifyHistory(rounds = []) {
+  const history = verifyHistory(rounds)
+  if (!history.length) return []
+  const roundNumbers = [...new Set(rounds.map(r => r.round))].sort((a, b) => a - b)
+  const lines = []
+  lines.push(`| 命令 | ${roundNumbers.map(n => `第 ${n} 轮`).join(' | ')} | 结论 |`)
+  lines.push(`| --- | ${roundNumbers.map(() => '---').join(' | ')} | --- |`)
+  for (const entry of history) {
+    const cells = roundNumbers.map((n) => {
+      const hit = entry.cells.find(c => c.round === n)
+      if (!hit) return '—'
+      if (hit.ok) return hit.cached ? '✔(复用)' : '✔'
+      return `✖${hit.code != null ? `(${hit.code})` : ''}`
+    })
+    const conclusion = !entry.finallyOk ? '仍未通过' : (entry.everFailed ? '从红到绿' : '一直通过')
+    lines.push(`| \`${entry.command}\` | ${cells.join(' | ')} | ${conclusion} |`)
+  }
+  return lines
+}
 
 /**
  * 事件日志 + 报告生成器。
@@ -116,6 +163,26 @@ export class Journal {
       lines.push(`| ${round.round} | ${v.status ?? '?'} | ${v.confidence?.toFixed?.(2) ?? '?'} | ${humanDuration((round.endedAt ?? round.startedAt) - round.startedAt)} | ${escapeCell(oneLine(v.reason ?? '', 220))} | ${escapeCell(oneLine(round.injected ?? '', 160)) || '—'} |`)
     }
     lines.push('')
+    const verifyRows = renderVerifyHistory(rounds)
+    if (verifyRows.length) {
+      lines.push('## 验收命令的历史（从红到绿）')
+      lines.push('')
+      lines.push(...verifyRows)
+      lines.push('')
+    }
+
+    const weakenings = rounds.filter(r => r.planChange?.weakened)
+    if (weakenings.length) {
+      lines.push('## ⚠️ 方案文档的"合同"被改弱过')
+      lines.push('')
+      for (const record of weakenings.slice(-5)) {
+        lines.push(`- 第 ${record.round} 轮：${record.planChange.description || '有内容被移除'}`)
+      }
+      lines.push('')
+      lines.push('这不是小事：验收标准/任务被移除或改写之后，"通过"的含义已经变了。'
+        + '请人工核对方案文档的 `git diff`（默认 `evidence.planGuard` 会因此拒绝收工）。')
+      lines.push('')
+    }
 
     const last = rounds.at(-1)
     if (last?.answerText || last?.answerTail) {
@@ -182,6 +249,7 @@ function stopReasonLabel(reason) {
     aborted: '被中断（Ctrl+C / 信号）',
     error: '出错停止',
     'agent-gone': '找不到被监工的会话/agent',
+    'multi-incomplete': '部分 agent 未完成（多 agent 并行，见分项报告）',
   }
   return map[reason] ?? reason
 }
@@ -193,7 +261,12 @@ function nextSteps(reason, plan, verdict) {
     steps.push('如果这不是你想要的"完成"，把方案文档写得更具体（尤其是验收标准），再来一轮。')
   } else if (reason === 'needs-human') {
     steps.push(`回答监工的问题：${oneLine(verdict?.reason ?? '', 200)}`)
-    steps.push('在方案文档里补齐「验收标准」，监工下次就能自己判断了。')
+    if (verdict?.details?.planWeakened) {
+      steps.push('核对方案文档的 `git diff`：验收标准/任务被移除或改写后，"通过"的含义已经变了。')
+      steps.push('如果是你有意放宽，请在 config.evidence 里显式设 `allowPlanWeakening: true`（并想清楚为什么）。')
+    } else {
+      steps.push('在方案文档里补齐「验收标准」，监工下次就能自己判断了。')
+    }
   } else if (reason === 'stalled' || reason === 'blocked') {
     steps.push('看上面表格里"抽出去的鞭子"与 agent 的回答，判断它到底卡在哪。')
     steps.push('把卡点写成方案文档里的一个更小、更明确的任务，再跑 `cw run`。')

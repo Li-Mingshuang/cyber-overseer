@@ -9,8 +9,11 @@
 功能范围以 [`ROADMAP.md`](ROADMAP.md) 的清单为准；每一轮只推进一项。
 
 ## 验收标准
-- `node --test "test/*.test.mjs"` 全绿（当前 55 个用例）
-- `node scripts/lint.mjs` 通过（语法 + ESM 一致性 + 不污染 stdout 契约）
+- `node --test "test/*.test.mjs"` 全绿（134 个用例）。
+  注意：`acp.test.mjs` / `hooks-mcp.test.mjs` 与 `dsh-jsonrpc.test.mjs` 的端到端用例
+  需要 Node 子进程 + 管道——在禁止子进程的沙箱里前者会 EPERM 失败、后者会**显式 skip**；
+  CI 与普通机器上全绿（本次改动的验证方式见回答里的说明）
+- `node scripts/lint.mjs` 通过（语法 + ESM 一致性 + 不污染 stdout 契约 + .ps1 BOM）
 - `node bin/cw.mjs run --config examples/lazy-agent/cw.config.mjs` 能跑完离线演示并以退出码 0 收工
 - 新增的适配器/通道都有**协议级测试**（不许只写"看起来对"的代码）
 
@@ -28,17 +31,22 @@
 - [x] 适配器：generic-cli / mcp-mailbox
 - [x] 适配器：acp（标准协议通道，同连接多轮）
 - [x] 报告与通知：CW-REPORT.md + journal.jsonl + webhook/响铃
-- [x] 测试 55 个 + 离线端到端演示
+- [x] 测试 134 个 + 离线端到端演示
 - [x] 双语文档 + 各家逆向报告
 - [x] dsh 的 ACP 通道：真实握手实测通过（`node scripts/verify-acp.mjs`，零 token）
 - [ ] dsh 的 ACP prompt 通路实测（需要花真实额度，留给主人决定）
-- [ ] dsh 的 SDK JSON-RPC 通道（协议已摸清，见 docs/recon/dsh-control-surfaces.md §4.6）
-- [ ] human-sim 读回强化：把"输入框抢占焦点导致 Ctrl+A 选不到对话记录"彻底解决
-      （候选：读前用 Esc/点击把焦点移出输入框、按消息块滚动截图 OCR 兜底、优先 readerAdapter 读磁盘）
-- [ ] human-sim：macOS（osascript）与 Linux（xdotool）驱动
-- [ ] 多 agent 并行监工（一个监工进程管多个会话）
-- [ ] `cw status --watch`：终端里的实时面板
-- [ ] Windows 原生 toast 通知（目前只有响铃 + webhook）
+- [x] dsh 的 SDK JSON-RPC 通道（`dsh-jsonrpc` 适配器 + `cw dsh-profile` 一键建 profile + 模板文件；
+      协议竞态/事件折叠有单测与真子进程夹具；真跑需主人自己的 DSH_HOME 与额度）
+- [x] human-sim 读回强化：候选点挨个点选对话区 + 可选 Esc 模糊 + 焦点探针改用 Ctrl+Z（顺带修掉"探针会删掉主人草稿"的真实隐患）
+- [x] human-sim：macOS（osascript / System Events）与 Linux（xdotool + xclip/xsel/wl-clipboard）驱动
+      （命令构造与解析有假 runFn 单测；真机实测留给有 mac/Linux 的人）
+- [x] 多 agent 并行监工（一个监工进程管多个会话，预算共享、报告合并）
+- [x] `cw status --watch`：终端里的实时面板（多 agent 也一起显示）
+- [x] Windows 原生 toast 通知（`notify.toast` 默认 auto；`cw toast` 可自检，已在本机实测弹窗成功）
+- [x] 证据强化：方案文档"合同"防篡改（验收标准 / 任务 / 禁止事项被移除或改写 → 默认拒绝收工并喊人；
+      `evidence.planGuard`，可用 `allowPlanWeakening` 显式放行）
+- [x] 证据强化：验收命令的**历史趋势**进报告（"从红到绿"一眼可见，不再只看最后一次）
+- [ ] 证据强化：独立复核（判定 done 时另起一个干净会话复核这份 diff）——要花真实额度，留给主人决定
 
 ## 禁止 / 范围外
 - 不许替主人批准 agent 的危险操作（`guard.autoApprove` 默认必须为 false）

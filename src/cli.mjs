@@ -36,7 +36,7 @@ import { clip, oneLine } from './util/text.mjs'
 import { ADAPTER_CATALOG, createAdapter, loadAdapters } from './adapters/index.mjs'
 import { hasZstd } from './util/zstd-frames.mjs'
 import { loadSqlite } from './util/sqlite.mjs'
-import { hasTouchSupport } from './util/platform.mjs'
+import { uiSupportLabel } from './util/platform.mjs'
 
 /** 解析 argv（零依赖，够用就好）。 */
 export function parseArgv(argv) {
@@ -92,7 +92,8 @@ export async function main(argv = process.argv.slice(2)) {
   // 「一句话起步」：第一个词不是命令时，把整句当作目标 —— `cw "把登录页改成深色主题并跑通测试"`
   const COMMANDS = new Set([
     'help', 'version', 'init', 'doctor', 'adapters', 'sessions', 'windows', 'judge', 'whip',
-    'status', 'report', 'pause', 'resume', 'hooks', 'hook', 'mcp', 'ui', 'web', 'run', 'watch', 'do', 'poke',
+    'status', 'report', 'pause', 'resume', 'hooks', 'hook', 'mcp', 'ui', 'web', 'run', 'watch', 'do', 'poke', 'toast',
+    'dsh-profile',
   ])
   if (!COMMANDS.has(command)) {
     return cmdQuick({ log, cwd, sentence: positional.join(' '), flags })
@@ -110,18 +111,30 @@ export async function main(argv = process.argv.slice(2)) {
     case 'poke': return cmdPoke({ log, cwd, flags })
     case 'do': return cmdQuick({ log, cwd, sentence: positional.slice(1).join(' '), flags })
     case 'whip': return cmdWhip({ log, config, cwd, planPath, agentCwd, positional, flags })
-    case 'status': return cmdStatus({ log, config, cwd })
+    case 'status': return cmdStatus({ log, config, cwd, flags })
     case 'report': return cmdReport({ log, config, cwd })
     case 'pause': return cmdPause({ log, config, cwd, resume: false })
     case 'resume': return cmdPause({ log, config, cwd, resume: true })
     case 'hooks': return cmdHooks({ log, cwd, flags, positional })
     case 'hook': return cmdHook({ log, cwd, flags, positional })
     case 'mcp': return cmdMcp({ log, config, cwd, flags })
+    case 'toast': return cmdToast({ log, flags })
+    case 'dsh-profile': return cmdDshProfile({ log, flags })
     case 'ui':
     case 'web': return cmdUi({ log, cwd, flags })
     case 'run':
     case 'watch': {
       if (command === 'watch') config.runtime.dryRun = true
+      // 配了 agents[] 就并行盯多个（共享一套预算、报告合并）
+      const { isMultiAgent, runMultiAgent } = await import('./engine/multi.mjs')
+      if (isMultiAgent(config)) {
+        const result = await runMultiAgent({
+          config, cwd, log,
+          resume: flags.fresh !== true,
+          deps: {},
+        })
+        return result.exitCode ?? 0
+      }
       const result = await runOverseer({
         config,
         cwd,
@@ -185,7 +198,7 @@ function printHelp(log) {
   cw watch            演练模式：只判定、只打印要抽的鞭子，不真的注入
   cw judge            只判定一次并打印结论
   cw whip "<文本>"    手动抽一鞭（调试注入通道）
-  cw status           当前状态摘要
+  cw status           当前状态摘要（--watch 实时面板）
   cw report           打印最近一次报告（--save 重新生成）
   cw pause / resume   喊停 / 继续（写 .cyber/PAUSE 哨兵文件）
   cw sessions         列出可监工的会话
@@ -196,9 +209,11 @@ function printHelp(log) {
   cw hooks install cursor    给 Cursor 装官方 stop 钩子（最干净的闭环）
   cw hook cursor-stop        钩子回调入口（由 Cursor 调用，读 stdin）
   cw mcp --serve            启动 MCP 信箱服务端（给支持 MCP 的 agent 用）
+  cw toast                 自检 Windows 原生通知（收工提醒；--script 只看脚本）
+  cw dsh-profile           查看/安装 DSH 的 SDK JSON-RPC profile（--install，零 token）
 
 常用选项：
-  --adapter <id>      指定适配器：dsh|codex|opencode|cursor|human-sim|generic-cli|mcp-mailbox|fake
+  --adapter <id>      指定适配器：dsh|dsh-jsonrpc|codex|opencode|cursor|acp|human-sim|generic-cli|mcp-mailbox|fake
   --session <id>      指定会话（默认 latest）
   --plan <file>       指定方案文档（默认 PLAN.md）
   --judge <kind>      判定器：chain|rule|llm|human
@@ -206,7 +221,12 @@ function printHelp(log) {
   --dry-run           演练模式
   --cwd <dir>         工作目录
   --config <file>     指定配置文件
+  --watch             用于 status：开实时面板（Ctrl+C 退出）
+  --interval <秒>     用于 status --watch：刷新间隔，默认 2
   --verbose           详细日志
+
+多 agent 并行监工：在 cw.config.mjs 里写 agents: [...]（每个条目可有自己的
+adapter / cwd / plan / session），判定与抽鞭各自独立，报告合并、预算共享。
 
 退出码：0=完成  10=轮次上限  11=时长上限  12=花费上限  13=无进展  14=受阻
         15=需要人类  16=被喊停  17=找不到会话  1=出错
@@ -228,18 +248,27 @@ export default {
 
   // 被监工的 agent
   agent: {
-    adapter: 'dsh',          // dsh | codex | opencode | cursor | human-sim | generic-cli | mcp-mailbox
+    adapter: 'dsh',          // dsh | dsh-jsonrpc | codex | opencode | cursor | human-sim | generic-cli | mcp-mailbox
+    // dsh-jsonrpc：常驻 DSH 的 jrpc profile 进程（注入 + 事件流观测）；先跑 cw dsh-profile --install
     session: 'latest',
     options: {
       // ---- DSH ----
       // whip: 'headless',     // headless（一次性新会话，推荐）| http | human-sim | custom
-      // ---- 拟人通道（任何 GUI agent）----
+      // ---- 拟人通道（任何 GUI：Windows / macOS / Linux 都有驱动）----
       // windowMatch: { process: 'Cursor' },
       // composer: { relX: 0.5, relY: 0.94 },
+      // readerClickPoints: [{ relX: 0.5, relY: 0.35 }],   // 焦点在输入框里时挨个点这些位置再读
+      // 先跑 cw doctor / cw windows 看本平台结论（mac 要辅助功能权限，linux 要 xdotool）
       // ---- 通用 CLI ----
       // command: ['my-agent', '--resume', '{session}', '{text}'],
     },
   },
+
+  // 多 agent 并行监工（可选）：每个条目独立判定/抽鞭，报告合并，预算共享。
+  // agents: [
+  //   { name: 'front', adapter: 'cursor', cwd: 'apps/web', plan: 'PLAN-web.md' },
+  //   { name: 'back',  adapter: 'codex',  cwd: 'apps/api', plan: 'PLAN-api.md' },
+  // ],
 
   // 判定器：chain = 规则优先，判不了才花钱问模型
   judge: {
@@ -323,7 +352,7 @@ async function cmdDoctor({ log, config, cwd, planPath, agentCwd }) {
     ['平台', `${process.platform} ${process.arch}`, true],
     ['zstd（读 DSH 会话必需）', hasZstd() ? '可用' : '不可用 → 升级 Node >= 22.15', hasZstd()],
     ['node:sqlite（读 codex/opencode/cursor 必需）', sqlite ? '可用' : '不可用 → 升级 Node >= 22.5', Boolean(sqlite)],
-    ['UI 自动化（拟人通道）', hasTouchSupport() ? '可用（Windows）' : '不可用（仅 Windows 有实现）', hasTouchSupport()],
+    ['UI 自动化（拟人通道）', uiSupportLabel(), uiSupportLabel().startsWith('可用')],
     ['方案文档', existsSync(planPath) ? planPath : `缺失：${planPath}`, existsSync(planPath)],
     ['配置文件', config.__configPath ?? '（用默认配置）', true],
   ]
@@ -408,14 +437,15 @@ async function cmdSessions({ log, config, cwd, agentCwd, flags }) {
   const probe = await adapter.probe()
   if (!probe.ok) { log.error(`${adapterId} 不可用：${probe.reason}`); return 1 }
   const sessions = await adapter.listSessions()
-  const limit = Number(flags.limit ?? 25)
+  // 默认**全部**列出：以前默认只列 25 个，用户会以为"有些会话看不到"（实测踩到）
+  const limit = Number(flags.limit ?? 0)
   const liveOnly = flags.live === true
 
   // "还活着"的判据：最近 30 分钟内有更新，或者状态本身就是"在跑/等人"
   const now = Date.now()
   const ACTIVE = new Set(['working', 'awaiting-approval', 'awaiting-input'])
   const isLive = (s) => ACTIVE.has(s.status) || (s.updatedAt && now - s.updatedAt < 30 * 60 * 1000)
-  const rows = (liveOnly ? sessions.filter(isLive) : sessions).slice(0, limit)
+  const rows = (liveOnly ? sessions.filter(isLive) : sessions).slice(0, limit > 0 ? limit : undefined)
   if (!rows.length) { log.warn(`没有${liveOnly ? '活跃的' : ''}会话`); return 0 }
 
   const STATUS_LABEL = {
@@ -458,10 +488,13 @@ function relativeTime(ms) {
 
 /** cw windows */
 async function cmdWindows({ log, config, agentCwd }) {
-  const { createWindowsDriver, describeWindows } = await import('./ui/windows.mjs')
-  if (!hasTouchSupport()) { log.error('拟人通道目前只支持 Windows'); return 1 }
-  const driver = createWindowsDriver({ log })
-  log.banner(`当前空闲：${Math.round((await driver.idle()) / 1000)}s`)
+  const { createUiDriver, describeWindows } = await import('./ui/index.mjs')
+  const driver = createUiDriver({ log })
+  if (driver.supported === false) {
+    log.error(driver.reason ?? `拟人通道在 ${driver.platform ?? process.platform} 上不可用`)
+    return 1
+  }
+  log.banner(`平台：${driver.platform}｜当前空闲：${Math.round((await driver.idle()) / 1000)}s`)
   for (const line of await describeWindows(driver, 40)) log.raw(`  ${line}`)
   log.raw('\n挑一个填进 agent.options.windowMatch，例如：{ process: "Cursor" } 或 { title: "Codex" }')
   return 0
@@ -529,8 +562,28 @@ async function cmdWhip({ log, config, cwd, planPath, agentCwd, positional, flags
   return result.ok ? 0 : 1
 }
 
-/** cw status */
-function cmdStatus({ log, config, cwd }) {
+/** cw status（--watch 时是实时面板） */
+async function cmdStatus({ log, config, cwd, flags = {} }) {
+  if (flags.watch === true) {
+    const { watchStatus } = await import('./engine/panel.mjs')
+    const intervalSec = flags.interval !== undefined ? Math.max(0.25, Number(flags.interval)) : 2
+    const controller = new AbortController()
+    const onSignal = () => controller.abort()
+    process.once('SIGINT', onSignal)
+    process.once('SIGTERM', onSignal)
+    try {
+      log.info(`实时面板：每 ${intervalSec}s 刷新（Ctrl+C 退出）`)
+      const result = await watchStatus({
+        cwd, config, out: process.stdout, log, intervalMs: intervalSec * 1000, signal: controller.signal,
+      })
+      if (result.interrupted) log.info('面板已退出（状态没有变，监工该跑还在跑）')
+      return 0
+    } finally {
+      process.removeListener('SIGINT', onSignal)
+      process.removeListener('SIGTERM', onSignal)
+    }
+  }
+
   const file = statePath(config, cwd)
   const store = StateStore.open(file)
   const summary = store.summary()
@@ -543,6 +596,18 @@ function cmdStatus({ log, config, cwd }) {
   if (summary.lastVerdict) log.raw(`  最近判定：${summary.lastVerdict.status} — ${oneLine(summary.lastVerdict.reason ?? '', 140)}`)
   const pause = resolve(cwd, config.guard?.pauseFile ?? '.cyber/PAUSE')
   log.raw(`  暂停哨兵：${existsSync(pause) ? '存在（已暂停）' : '不存在'}`)
+
+  // 配了 agents[] 的话，顺手把每个 agent 的状态也列出来（免得多 agent 时看不到全貌）
+  const { isMultiAgent } = await import('./engine/multi.mjs')
+  if (isMultiAgent(config)) {
+    const { panelSources, renderPanel } = await import('./engine/panel.mjs')
+    const sources = panelSources({ cwd, config }).filter(s => s.exists)
+    if (sources.length) {
+      log.raw('')
+      log.raw(renderPanel(sources, { color: false, cwd, guard: config.guard, paused: existsSync(pause) }))
+    }
+  }
+  log.raw('\n想看实时刷新：cw status --watch（--interval 1 秒级刷新）')
   return 0
 }
 
@@ -634,6 +699,127 @@ async function cmdMcp({ log, config, cwd, flags }) {
   const { serveMcpMailbox } = await import('./adapters/mcp-mailbox.mjs')
   await serveMcpMailbox({ cwd, log })
   return 0
+}
+
+/**
+ * cw toast —— 自检 Windows 原生通知通道。
+ *
+ * 收工/卡住时监工会自己发一条 toast（`notify.toast`，默认 auto = Windows 上开）。
+ * 这个命令用来当场验证"这台机器能不能弹出来"，而不是等到早上才发现没收到通知。
+ */
+async function cmdToast({ log, flags }) {
+  const { buildToastScript, sendToast, toastAvailable, DEFAULT_APP_ID } = await import('./util/toast.mjs')
+  const title = typeof flags.title === 'string' ? flags.title : '赛博监工 · 通知自检'
+  const text = typeof flags.text === 'string'
+    ? String(flags.text)
+    : '如果你看到这条通知，说明监工的收工提醒是通的。'
+  const appId = typeof flags.appid === 'string' ? String(flags.appid) : undefined
+
+  if (flags.script === true) {
+    log.raw(buildToastScript({ title, text, appId }))
+    return 0
+  }
+  if (!toastAvailable()) {
+    log.error('这台机器没有可用的 toast 通道（需要 Windows + Windows PowerShell 5.1）')
+    log.raw(`  平台：${process.platform}｜默认 AppID：${DEFAULT_APP_ID}`)
+    return 1
+  }
+  const result = await sendToast({ title, text, appId, log })
+  if (result.ok) {
+    log.ok(`已弹出一条 toast：${title}`)
+    log.raw('  如果没看到，请检查「设置 → 系统 → 通知」里 PowerShell 的通知是否被关掉/勿扰模式是否开着。')
+    return 0
+  }
+  log.error(`toast 发送失败：${result.detail}`)
+  log.raw('  排查：cw toast --script  可以打印将要执行的 PowerShell 脚本（内容用 base64 传递，不会被注入）。')
+  return 1
+}
+
+/**
+ * cw dsh-profile —— 建/查 DSH 的 SDK JSON-RPC profile（`dsh --profile jrpc`）。
+ *
+ * 这条通道能同时"注入 + 观测"，且完全不碰人类会话；但产品 CLI 的 web/headless profile
+ * 都没挂那个插件包，所以要自建一个 profile。本命令只做三件事：写模板文件、建插件软链、
+ * 把"还差什么"说清楚——**已经存在的文件一律不覆盖**（除非显式 --force）。
+ */
+async function cmdDshProfile({ log, flags }) {
+  const {
+    DEFAULT_PROFILE, SDK_PACKAGE, inspectProfile, installProfile, profileTemplateFiles,
+  } = await import('./dsh-profile.mjs')
+  const profile = typeof flags.profile === 'string' ? String(flags.profile) : DEFAULT_PROFILE
+  const home = typeof flags['dsh-home'] === 'string' ? String(flags['dsh-home']) : undefined
+
+  if (flags.help === true || flags.h === true) {
+    log.raw(`
+cw dsh-profile —— DSH 的 SDK stdio JSON-RPC profile（注入 + 事件流观测，零侵入）
+
+  cw dsh-profile                     查看当前 profile 是否就绪
+  cw dsh-profile --install           写 profile 模板（package.json + cordis.patch.yml + pnpm-workspace.yaml）
+  cw dsh-profile --install --sdk-path <deepseek-harness>/packages/sdk/server
+                                     顺便把插件包软链到 profiles/node_modules（Windows 用 junction，免管理员）
+  cw dsh-profile --print             打印将要写入的内容（不改任何文件）
+  cw dsh-profile --force             覆盖已存在的模板文件（默认绝不覆盖）
+
+选项：--profile <name>（默认 jrpc）  --dsh-home <dir>（默认 $DSH_HOME 或 ~/.dsh）
+之后：cw run --adapter dsh-jsonrpc   （需要 DEEPSEEK_API_KEY；协议无 resume，session 是新建的）
+`)
+    return 0
+  }
+
+  if (flags.print === true) {
+    log.banner(`SDK JSON-RPC profile 模板（${profile}）`)
+    for (const entry of profileTemplateFiles(profile)) {
+      log.raw(`\n--- ${entry.file} ---`)
+      log.raw(entry.content.replace(/\n$/, ''))
+    }
+    return 0
+  }
+
+  if (flags.install === true || flags.force === true) {
+    const result = installProfile({
+      home,
+      profile,
+      force: flags.force === true,
+      sdkPath: typeof flags['sdk-path'] === 'string' ? String(flags['sdk-path']) : undefined,
+      cwd: resolve(String(flags.cwd ?? process.cwd())),
+    })
+    log.banner(`安装 SDK JSON-RPC profile「${profile}」`)
+    log.raw(`  目录：${result.dir}`)
+    log.raw(`  新建：${result.created.length ? result.created.join('、') : '（无）'}`)
+    if (result.skipped.length) log.raw(`  已存在（未覆盖）：${result.skipped.join('、')}`)
+    log.raw(`  插件软链：${result.linked ?? '（未创建）'}`)
+    for (const warning of result.warnings) log.warn(warning)
+    for (const hint of result.hints) log.raw(`  · ${hint}`)
+    if (result.ok) {
+      log.ok('profile 就绪')
+      log.raw('')
+      log.raw('下一步：')
+      log.raw(`  1. 在 cw.config.mjs 里：agent: { adapter: 'dsh-jsonrpc', options: { profile: '${profile}', workspace: '<被监工的项目>' } }`)
+      log.raw(`  2. 设好 DSH_HOME=${result.home} 与 DEEPSEEK_API_KEY（真实额度由你决定）`)
+      log.raw('  3. cw watch   # 演练（只判定、只打印鞭子），确认无误再 cw run')
+      log.raw(`  插件包：${SDK_PACKAGE}（stdout 被协议独占：profile 里不要挂 stdout logger）`)
+      return 0
+    }
+    log.warn('还没完全就绪：按上面的 · 提示补齐后再跑一次 cw dsh-profile')
+    return 1
+  }
+
+  const status = inspectProfile({ home, profile })
+  log.banner(`DSH SDK JSON-RPC profile「${profile}」`)
+  log.raw(`  DSH_HOME：${status.home}`)
+  log.raw(`  目录：${status.dir}`)
+  log.raw(`  ${status.files.manifest ? '✔' : '✖'} package.json（bundles 清单）`)
+  log.raw(`  ${status.files.patch ? '✔' : '✖'} cordis.patch.yml（用户补丁层）`)
+  log.raw(`  ${status.patchMentionsServer ? '✔' : '✖'} patch 里挂了 ${SDK_PACKAGE}`)
+  log.raw(`  ${status.resolvable ? '✔' : '✖'} 插件包可解析${status.linkTarget ? `（软链 → ${status.linkTarget}）` : ''}`)
+  log.raw(`  软链位置：${status.link}`)
+  for (const hint of status.hints) log.raw(`  · ${hint}`)
+  if (status.ok) {
+    log.ok('profile 就绪：cw run --adapter dsh-jsonrpc')
+    return 0
+  }
+  log.warn(`尚未就绪：cw dsh-profile --install --profile ${profile}`)
+  return 1
 }
 
 /**

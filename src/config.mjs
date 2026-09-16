@@ -8,10 +8,12 @@
  * @module cyber-overseer/config
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { isAbsolute, resolve } from 'node:path'
 import { createLogger } from './util/log.mjs'
+import { ADAPTER_IDS } from './adapters/index.mjs'
 
 /** 用户配置的默认值。任何一项都可以在 cw.config.mjs 里覆盖。 */
 export function defaultConfig() {
@@ -21,7 +23,7 @@ export function defaultConfig() {
 
     /** 被监工的 agent。 */
     agent: {
-      /** 适配器 id：dsh | codex | opencode | cursor | human-sim | generic-cli | mcp-mailbox | fake */
+      /** 适配器 id：dsh | codex | opencode | cursor | acp | human-sim | generic-cli | mcp-mailbox | fake */
       adapter: 'dsh',
       /** agent 的工作目录（默认=监工自己所在目录）。 */
       cwd: null,
@@ -30,6 +32,24 @@ export function defaultConfig() {
       /** 交给适配器的额外参数（每种适配器自定义）。 */
       options: {},
     },
+
+    /**
+     * 多 agent 并行监工（可选）。
+     *
+     * 真实项目里常常同时开着 Cursor 写前端、codex 改后端。把每个要盯的对象写成一个条目，
+     * 监工就并行地盯着它们：判定/抽鞭各自独立，报告合并成一份，轮次/时长/花费**共享**一套预算。
+     *
+     * 条目形如：
+     * ```js
+     * agents: [
+     *   { name: 'frontend', adapter: 'cursor', cwd: 'apps/web', plan: 'PLAN-web.md' },
+     *   { name: 'backend',  adapter: 'codex',  cwd: 'apps/api', plan: 'PLAN-api.md', session: 'latest' },
+     * ]
+     * ```
+     * 条目可覆盖上面 agent 之外的任何配置（judge / evidence / whip / guard …）；
+     * 为空的条目 = 直接用顶层配置。判重名会自动加后缀。
+     */
+    agents: [],
 
     /** 判定器：读方案文档 + 最后一次回答 → 收工 / 继续 / 卡住。 */
     judge: {
@@ -80,6 +100,15 @@ export function defaultConfig() {
       includeVerifyOutput: true,
       /** 每轮都重跑验收命令（false=只在方案勾选有变化时跑，省时间）。 */
       verifyEveryRound: false,
+      /**
+       * 方案文档防篡改：把**第一轮**看到的"合同"（验收标准 + 禁止事项 + 任务清单文本）当基线，
+       * 之后任何**移除**（含改写）都会被判定为"改弱了"→ 规则判定拒绝收工并喊人。
+       *
+       * 为什么默认开：方案文档是 agent 自己也能改的文件，而"把验收标准改简单"是它做得到的作弊。
+       */
+      planGuard: true,
+      /** 明确接受"agent 可以改弱合同"（危险；默认 false）。 */
+      allowPlanWeakening: false,
     },
 
     /** 安全护栏。默认偏保守——监工是拿来睡觉时用的，出错的代价由主人承担。 */
@@ -147,6 +176,13 @@ export function defaultConfig() {
       webhook: null,
       /** 终端响铃。 */
       beep: true,
+      /**
+       * Windows 原生 toast：true | false | 'auto'（默认，Windows 上开、其它平台关）| { title, appId, duration }。
+       * 只在收工/出错时弹一次（与 onlyOnEnd 无关，因为通知本身只在收尾时发）。
+       */
+      toast: 'auto',
+      /** toast 的 AppUserModelID；企业环境里可能需要换成自己注册的 AUMID。 */
+      toastAppId: null,
       /** 只在收工/出错时通知。 */
       onlyOnEnd: true,
     },
@@ -179,6 +215,44 @@ export function mergeConfig(base, override) {
 /** 便捷写法：拿到类型提示的同时保持零依赖。 */
 export function defineConfig(config) {
   return config
+}
+
+/**
+ * 载入 `.env` 文件里的密钥（让"配 API"变成"在界面或文件里填一次"）。
+ *
+ * 查找顺序（都**不覆盖**已存在的环境变量，与 dotenv 行为一致；先找到的优先）：
+ *   1. `<项目>/.cyber/.env`（界面里填的密钥存这里；`.cyber/` 默认 gitignore）
+ *   2. `<项目>/.env`
+ *   3. `~/.cyber-overseer/.env`（用户级：放一次，所有项目都能用）
+ *
+ * @param {string} cwd
+ * @returns {{loaded:string[], files:string[]}}
+ */
+export function loadEnvFiles(cwd) {
+  const files = [
+    resolve(cwd, '.cyber', '.env'),
+    resolve(cwd, '.env'),
+    resolve(homedir(), '.cyber-overseer', '.env'),
+  ]
+  const loaded = []
+  const used = []
+  for (const file of files) {
+    if (!existsSync(file)) continue
+    let text = ''
+    try { text = readFileSync(file, 'utf8') } catch { continue }
+    used.push(file)
+    for (const line of text.split('\n')) {
+      const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line)
+      if (!match) continue
+      const key = match[1]
+      let value = match[2]
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1)
+      }
+      if (process.env[key] === undefined) { process.env[key] = value; loaded.push(key) }
+    }
+  }
+  return { loaded, files: used }
 }
 
 /**
@@ -215,6 +289,10 @@ export async function loadConfig(opts = {}) {
   let config = mergeConfig(defaultConfig(), userConfig)
   if (opts.overrides) config = mergeConfig(config, opts.overrides)
 
+  // 先载入 .env，再校验（校验需要看得到 API Key）
+  const env = loadEnvFiles(cwd)
+  if (env.loaded.length) log.debug?.(`已从 ${env.files.join('、')} 载入：${env.loaded.join(', ')}`)
+
   // 归一化与校验
   const problems = validateConfig(config, { cwd })
   warnings.push(...problems)
@@ -222,6 +300,7 @@ export async function loadConfig(opts = {}) {
   config.__cwd = cwd
   config.__configPath = configPath
   config.__log = log
+  config.__env = env
   const dir = isAbsolute(config.journal.dir) ? config.journal.dir : resolve(cwd, config.journal.dir)
   const planPath = isAbsolute(config.plan) ? config.plan : resolve(cwd, config.plan)
   const agentCwd = config.agent.cwd
@@ -286,11 +365,64 @@ export function validateConfig(config, ctx = { cwd: process.cwd() }) {
   if (config.judge?.kind !== 'rule') {
     const key = process.env[llm.apiKeyEnv ?? 'DEEPSEEK_API_KEY']
     if (!key && (config.judge?.kind === 'llm' || config.judge?.kind === 'chain')) {
-      warnings.push(`环境变量 ${llm.apiKeyEnv} 未设置：LLM 判定不可用，chain 会自动退化为 rule`)
+      warnings.push(
+        `环境变量 ${llm.apiKeyEnv} 未设置：LLM 判定不可用，chain 会自动退化为 rule`
+        + `（配置方法：在项目里建 .env 写一行 ${llm.apiKeyEnv}=你的key，或设系统环境变量；`
+        + '不需要 API 的纯规则判定可设 judge.kind="rule"）',
+      )
     }
   }
   if (!config.evidence?.verify?.length) {
     warnings.push('evidence.verify 为空：判定器拿不到"测试是否通过"这类硬证据，收工判断会变弱')
   }
+  validateAgents(config, warnings)
+  return warnings
+}
+
+/**
+ * 校验多 agent 并行监工的条目（就地修正明显写错的地方）。
+ *
+ * 并行监工比单 agent 更容易"静默出错"（盯错目录、盯错会话），所以这里对
+ * 名字缺失/重名、adapter 未知都给出明确警告，而不是让它在运行时神秘失败。
+ *
+ * @param {any} config
+ * @param {string[]} warnings
+ */
+export function validateAgents(config, warnings = []) {
+  const entries = config.agents
+  if (entries === undefined || entries === null) { config.agents = []; return warnings }
+  if (!Array.isArray(entries)) {
+    warnings.push('agents 必须是数组，已忽略')
+    config.agents = []
+    return warnings
+  }
+  if (!entries.length) return warnings
+
+  const seen = new Set()
+  entries.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object') {
+      warnings.push(`agents[${index}] 不是对象，已忽略`)
+      return
+    }
+    const name = String(entry.name ?? entry.id ?? `agent-${index + 1}`).trim() || `agent-${index + 1}`
+    if (seen.has(name)) warnings.push(`agents 里有重名「${name}」：运行时会自动加后缀区分，建议改成不同的名字`)
+    seen.add(name)
+
+    const adapter = entry.adapter ?? entry.agent?.adapter ?? config.agent?.adapter
+    if (!ADAPTER_IDS.includes(adapter)) {
+      warnings.push(`agents[${index}].adapter=${adapter} 未知（可用：${ADAPTER_IDS.join(', ')}）`)
+    }
+    if (entry.cwd !== undefined && typeof entry.cwd !== 'string') {
+      warnings.push(`agents[${index}].cwd 必须是字符串`)
+    }
+    if (entry.plan !== undefined && typeof entry.plan !== 'string') {
+      warnings.push(`agents[${index}].plan 必须是字符串`)
+    }
+  })
+
+  if (config.judge?.kind !== 'rule' && !process.env[config.judge?.llm?.apiKeyEnv ?? 'DEEPSEEK_API_KEY']) {
+    warnings.push(`${entries.length} 个 agent 并行时每轮都可能调用 LLM 判定，但 ${config.judge?.llm?.apiKeyEnv ?? 'DEEPSEEK_API_KEY'} 未设置：会退化为 rule`)
+  }
+  warnings.push(`多 agent 并行：${entries.length} 个条目共享同一套护栏预算（maxRounds=${config.guard?.maxRounds}，总花费上限 ${config.guard?.maxCostUsd ?? '未设置'}）`)
   return warnings
 }

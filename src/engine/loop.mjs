@@ -25,7 +25,7 @@
 
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { planProgress, planSummary, loadPlan } from '../plan.mjs'
+import { planProgress, planSummary, loadPlan, planContract } from '../plan.mjs'
 import { createJudge } from '../judge/index.mjs'
 import { normalizeVerdict } from '../judge/types.mjs'
 import { createLogger } from '../util/log.mjs'
@@ -132,6 +132,9 @@ export async function runOverseer(opts) {
   const ctx = {
     config, cwd, planPath, agentCwd, plan, progress, adapter, session, store, journal, judge,
     log, signal, deps, now, pauseFile, previous: null,
+    // 并行监工时多个 runOverseer 共享的总闸；单 agent 时为 null（各管各的 state.json）
+    budget: deps.budget ?? null,
+    agentName: deps.agentName ?? null,
   }
 
   // ---------- 主循环 ----------
@@ -140,13 +143,16 @@ export async function runOverseer(opts) {
   let blockedCount = 0
   let lastVerdict = null
   let blankReads = 0
+  // 方案文档的"合同"基线：第一轮取一次（断点续跑时从状态文件读回）。
+  // 之后每轮对比它，抓"agent 把验收标准改简单 / 把任务删掉"。
+  let contractBaseline = config.evidence?.planGuard === false ? null : (store.state.planContract ?? null)
 
   for (;;) {
     // (1) 护栏
     const guard = checkGuards({ ...ctx, stopReason: null })
     if (guard.stop) {
-      journal.event('guard', { stop: true, reason: guard.reason })
-      log.warn(`护栏触发：${guard.reason}`)
+      journal.event('guard', { stop: true, reason: guard.reason, shared: Boolean(guard.shared), detail: guard.detail ?? null })
+      log.warn(`护栏触发：${guard.reason}${guard.shared ? '（并行监工的共享预算用完了）' : ''}${guard.detail ? ` — ${guard.detail}` : ''}`)
       return finish({ ...ctx, stopReason: guard.reason, verdict: lastVerdict, exitCode: EXIT_CODES[guard.reason] ?? 1 })
     }
     if (guard.waitMs) {
@@ -157,6 +163,8 @@ export async function runOverseer(opts) {
     }
 
     round++
+    // 共享预算：这一轮先记在总闸上，再干活。并行监工时"先记账"是防止超支的关键。
+    ctx.budget?.noteRound(ctx.agentName ?? undefined)
 
     // (1.5) 重读方案文档：它的勾选状态就是"进展"的权威来源
     const freshPlan = loadPlan(planPath, { fs: deps.readFileSync })
@@ -168,6 +176,11 @@ export async function runOverseer(opts) {
     progress = planProgress(plan)
     ctx.plan = plan
     ctx.progress = progress
+    if (!contractBaseline && config.evidence?.planGuard !== false) {
+      contractBaseline = planContract(plan)
+      store.patch({ planContract: contractBaseline })
+      journal.event('plan-contract', { baseline: contractBaseline, hash: plan.sha256 })
+    }
 
     // (2) 等 agent 空闲
     const idle = await waitForTurnEnd({ ...ctx, phase: 'before-judge', timeoutMs: config.guard?.waitForAgentIdleMs })
@@ -204,8 +217,12 @@ export async function runOverseer(opts) {
       config, cwd: agentCwd, plan, answer: snapshot.lastAnswer ?? '',
       previous: lastEvidence ? { evidence: lastEvidence, answerHash: lastEvidence.answerHash } : null,
       history: store.rounds, runFn: deps.run, log, signal,
+      baseline: contractBaseline,
     })
     lastEvidence = evidence
+    if (evidence.planChange?.weakened) {
+      log.warn(`方案文档的合同被改弱了：${evidence.planChange.description}（规则判定会拒绝收工）`)
+    }
     journal.event('evidence', {
       gate: evidence.answerHash,
       fingerprint: evidence.fingerprint,
@@ -213,6 +230,7 @@ export async function runOverseer(opts) {
       sameAsPreviousAnswer: evidence.sameAsPreviousAnswer,
       stallRounds: evidence.stallRounds,
       gitChanged: evidence.git?.changedSinceLastRound ?? null,
+      planChange: evidence.planChange ?? null,
     })
 
     // (5) 判定
@@ -224,6 +242,8 @@ export async function runOverseer(opts) {
     }
     const verdict = normalizeVerdict(await judge.judge(judgeInput), { judge: judge.id })
     lastVerdict = verdict
+    // 判定器花掉的钱也要记到共享总闸上（否则并行时"总花费"会被漏算）
+    if (verdict.costUsd) ctx.budget?.addCost(verdict.costUsd, ctx.agentName ?? undefined)
     log.step(`第 ${round} 轮判定：${verdict.status}（${verdict.confidence.toFixed(2)}）— ${oneLine(verdict.reason, 140)}`)
     journal.event('verdict', {
       round, status: verdict.status, reason: verdict.reason, confidence: verdict.confidence,
@@ -332,6 +352,11 @@ function makeRound({ round, verdict, evidence, injected, snapshot, store }) {
     answerHash: evidence?.answerHash ?? hash(snapshot?.lastAnswer ?? ''),
     answerText: snapshot?.lastAnswer ?? undefined,
     fingerprint: evidence?.fingerprint ?? '',
+    // 报告要画"验收命令从红到绿"的历史，所以每轮都留一份结果（只存摘要，不存输出）
+    verify: (evidence?.verify ?? []).map(v => ({
+      command: v.command, ok: v.ok, code: v.code, cached: Boolean(v.cached), durationMs: v.durationMs ?? 0,
+    })),
+    planChange: evidence?.planChange?.changed ? evidence.planChange : undefined,
     costUsd: verdict?.costUsd ?? 0,
     waitMs: 0,
   }
@@ -369,6 +394,12 @@ export function checkGuards(ctx) {
   if (guard.workWindow && !inWindow(guard.workWindow)) {
     const waitMs = Math.min(msUntilWindow(guard.workWindow), 30 * 60 * 1000)
     return { waitMs: Math.max(waitMs, 60 * 1000), reason: `不在工作时段（${guard.workWindow.from}–${guard.workWindow.to}）内` }
+  }
+  // 共享预算（多 agent 并行）：额度用完时所有 agent 一起停。
+  // 放在本 agent 自己的护栏之后——本 agent 已超限时，用更具体的理由停下更容易解释。
+  if (ctx.budget) {
+    const hit = ctx.budget.check(now())
+    if (hit) return { stop: true, reason: hit.reason, shared: true, detail: hit.detail }
   }
   return {}
 }
@@ -481,14 +512,37 @@ async function finish(ctx) {
     costUsd: state.costUsd ?? 0,
     exitCode: ctx.exitCode ?? 0,
     error: ctx.error ?? null,
+    // 并行监工时带上共享总闸的快照（合并报告用它说明"额度被谁用掉了"）
+    sharedBudget: ctx.budget?.snapshot() ?? null,
+    agentName: ctx.agentName ?? null,
   }
 }
 
-/** 通知：终端响铃 + webhook。 */
+/** 通知：终端响铃 + Windows toast + webhook。 */
 async function notify({ config, text, log }) {
   const notifyCfg = config.notify ?? {}
   if (notifyCfg.beep) {
     try { process.stdout.write('\u0007') } catch { /* 忽略 */ }
+  }
+  // Windows 原生 toast：主人早上醒来第一眼就能看到（默认 auto = Windows 上开）
+  try {
+    const { sendToast, splitNotification, toastEnabled } = await import('../util/toast.mjs')
+    if (toastEnabled(notifyCfg)) {
+      const extra = (notifyCfg.toast && typeof notifyCfg.toast === 'object') ? notifyCfg.toast : {}
+      const { title, body } = splitNotification(text)
+      const result = await sendToast({
+        title: extra.title ?? title,
+        text: body,
+        appId: extra.appId ?? notifyCfg.toastAppId ?? undefined,
+        duration: extra.duration,
+        silent: extra.silent,
+        log,
+      })
+      if (result.ok) log?.debug?.('toast 通知已发送')
+      else if (!result.skipped) log?.warn?.(`toast 通知失败：${result.detail}`)
+    }
+  } catch (error) {
+    log?.debug?.(`toast 通知异常：${error?.message ?? error}`)
   }
   if (!notifyCfg.webhook) return
   const { jsonRequest } = await import('../util/http.mjs')

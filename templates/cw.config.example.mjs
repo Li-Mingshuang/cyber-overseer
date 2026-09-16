@@ -10,7 +10,7 @@ export default {
   plan: 'PLAN.md',
 
   agent: {
-    adapter: 'dsh',                 // dsh | codex | opencode | cursor | human-sim | generic-cli | mcp-mailbox
+    adapter: 'dsh',                 // dsh | dsh-jsonrpc | codex | opencode | cursor | human-sim | generic-cli | mcp-mailbox
     session: 'latest',              // 'latest' | 具体会话 id | { match: { title: '...' } }
     options: {
       // —— DSH ——
@@ -18,14 +18,28 @@ export default {
       // permissionMode: 'workspace-write',
       // —— Cursor ——
       // whip: 'hooks',               // 用 `cw hooks install cursor` 装官方钩子（推荐）
-      // —— 拟人通道（任何 GUI）——
-      // windowMatch: { process: 'Cursor' },
-      // composer: { relX: 0.5, relY: 0.94 },
-      // readerAdapter: 'cursor',     // 能读磁盘就读磁盘，最准
+      // —— 拟人通道（任何 GUI：Windows / macOS / Linux 都有驱动）——
+      // windowMatch: { process: 'Cursor' },      // Windows 用进程名/标题；macOS 用应用名；Linux 用标题/X11 窗口
+      // composer: { relX: 0.5, relY: 0.94 },     // 输入框位置（也可给绝对 { x, y }）
+      // readerAdapter: 'cursor',                 // 能读磁盘就读磁盘，最准
+      // readerClickPoints: [{ relX: 0.5, relY: 0.35 }],  // 焦点被输入框抢走时，挨个点这些位置再读
+      // blurComposer: 'esc',                     // 可选：读之前按 Esc 赶走焦点（有 agent 用它"停止生成"，慎开）
+      // —— 平台注意 ——
+      // macOS：第一次要在「系统设置 → 隐私与安全性 → 辅助功能」里给终端/Node 授权
+      // Linux：需要 xdotool（+ xclip/xsel/wl-clipboard）；Wayland 需 XWayland
+      // 先跑 `cw doctor` 与 `cw windows` 看本平台的结论
       // —— 通用 CLI ——
       // command: ['my-agent', '--resume', '{session}', '{text}'],
     },
   },
+
+  // —— 多 agent 并行监工（可选）——
+  // 同时盯多个项目/多个 agent：判定与抽鞭各自独立，报告合并，轮次/时长/花费**共享**一套预算。
+  // agents: [
+  //   { name: 'front', adapter: 'cursor', cwd: 'apps/web', plan: 'PLAN-web.md' },
+  //   { name: 'back',  adapter: 'codex',  cwd: 'apps/api', plan: 'PLAN-api.md',
+  //     options: { command: ['codex', 'exec', 'resume', '--last', '{text}'] } },
+  // ],
 
   judge: {
     kind: 'chain',                  // chain（规则优先，判不了才问模型）| rule | llm | human
@@ -40,6 +54,8 @@ export default {
     git: true,
     verify: ['npm test'],           // ← 建议加：这是最硬的证据
     verifyEveryRound: false,        // true = 每轮都跑（慢但证据最新）
+    planGuard: true,                // 方案文档"合同"防篡改：验收标准/任务被移除或改写 → 拒绝收工并喊人
+    allowPlanWeakening: false,      // 除非你明确接受 agent 把验收标准改简单
   },
 
   guard: {
