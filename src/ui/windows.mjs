@@ -76,6 +76,8 @@ export function createWindowsDriver(opts = {}) {
   }
 
   return {
+    platform: 'win32',
+    supported: true,
     powershell,
     scriptPath,
     call,
@@ -113,39 +115,7 @@ export function createWindowsDriver(opts = {}) {
 }
 
 /**
- * 按 `windowMatch` 找目标窗口。
- * @param {ReturnType<typeof createWindowsDriver>} driver
- * @param {{process?:string, title?:string, hwnd?:number, class?:string, matchAll?:boolean}} match
- * @returns {Promise<any|null>}
+ * 窗口匹配与描述已经上移到平台无关的 `driver.mjs`，这里**原样再导出**，
+ * 保持 `import { findWindow } from '../ui/windows.mjs'` 的历史用法可用。
  */
-export async function findWindow(driver, match = {}, callOpts = {}) {
-  if (!match || Object.keys(match).length === 0) return null
-  if (match.hwnd) {
-    const win = await driver.window(match.hwnd, callOpts)
-    return win ?? null
-  }
-  const windows = await driver.listWindows({}, callOpts)
-  const tests = []
-  if (match.process) tests.push(w => regex(match.process).test(w.process ?? ''))
-  if (match.title) tests.push(w => regex(match.title).test(w.title ?? ''))
-  if (match.class) tests.push(w => regex(match.class).test(w.class ?? ''))
-  if (!tests.length) return null
-  const predicate = match.matchAll === false
-    ? (w) => tests.some(t => t(w))
-    : (w) => tests.every(t => t(w))
-  return windows.find(predicate) ?? null
-}
-
-function regex(value) {
-  if (value instanceof RegExp) return value
-  return new RegExp(String(value), 'i')
-}
-
-/** 描述当前桌面上的窗口（cw doctor / 报错提示用）。 */
-export async function describeWindows(driver, limit = 25) {
-  const windows = await driver.listWindows()
-  return windows
-    .filter(w => (w.title ?? '').trim().length > 0)
-    .slice(0, limit)
-    .map(w => `0x${Number(w.hwnd).toString(16)} ${String(w.process).padEnd(18)} ${String(w.title).slice(0, 60)}`)
-}
+export { findWindow, describeWindows } from './driver.mjs'

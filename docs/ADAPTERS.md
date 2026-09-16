@@ -231,6 +231,57 @@ ACP 是"客户端 ↔ agent"的开放协议（DSH、opencode、Zed 生态都实�
 
 ---
 
+## DSH 的 SDK JSON-RPC 通道（`dsh-jsonrpc`）
+
+DSH 自带一个 **stdio JSON-RPC 2.0** 服务端（插件包 `@deepseek-ai/dsh-sdk-jsonrpc-server`），
+它同时提供**注入**（`session/prompt`，服务端内部就是 `agent.followup`）与**观测**
+（`session.event` / `session.status` 逐条推事件）——是"可控自律进程"里最干净的一条通道
+（协议实测见 `docs/recon/dsh-control-surfaces.md` §4.6）。
+
+但它**不在产品 CLI 的 web/headless profile 里**，所以要自建一个 profile：
+
+```bash
+cw dsh-profile            # 体检：还差什么会说清楚
+cw dsh-profile --install --sdk-path <deepseek-harness>/packages/sdk/server
+```
+
+`--install` 只做三件事，且**已存在的文件一律不覆盖**（`--force` 才覆盖）：
+
+| 文件（`<DSH_HOME>/profiles/jrpc/`） | 内容 |
+|---|---|
+| `package.json` | `{ private:true, dependencies:{}, dsh:{ profile:{ bundles:['@deepseek-ai/dsh-base'] } } }`（与 DSH 的 `initProfile` 同形状） |
+| `cordis.patch.yml` | `- insert: [{ id: sdk-jsonrpc-server, name: '@deepseek-ai/dsh-sdk-jsonrpc-server' }]` |
+| `pnpm-workspace.yaml` | `nodeLinker: hoisted` / `autoInstallPeers: false` |
+
+并把插件包软链到 `<DSH_HOME>/profiles/node_modules/@deepseek-ai/dsh-sdk-jsonrpc-server`
+（Windows 用 junction，不需要管理员）。DSH 只会把"安装包依赖闭包"里的包软链过去，
+而这个包不在其中，这一步不能省。模板文件在 `templates/dsh-profile-jrpc/`。
+
+```js
+agent: {
+  adapter: 'dsh-jsonrpc',
+  options: {
+    profile: 'jrpc',
+    workspace: 'C:/path/to/被监工的项目',   // DSH 的工作目录
+    // dshHome / dshEntry / model / provider / initialize（透传给 initialize）
+  },
+}
+```
+
+**三个必须知道的协议事实**（都是实测踩出来的，适配器里已处理）：
+
+1. **必须等 `initialize` 的响应再发 `session/prompt`**：DSH 对同一批到达的帧是
+   `void handleLine()` **并发**处理；抢跑会撞上"用了默认模型"的 400。
+   本适配器的所有请求都带 id 且等响应，天然串行（`test/dsh-jsonrpc.test.mjs` 用假传输层
+   与真子进程夹具各钉了一遍帧顺序）。
+2. **没有 resume**：给一个不存在的 `sessionId` 是**新建**会话，不载入历史 → 记忆靠工作区与提示词。
+3. **没有 cancel/close**：放弃只能杀进程；stdout 被协议独占，profile 组合里不能有 stdout logger。
+
+失败分类：`-32601/-32602`（方法不存在/参数错）与解析不到包 → `setup`（停下喊人）；
+超时 → `transient`（下轮再试）；其余 → `fatal`。
+
+---
+
 ## 拟人通道（任何 GUI agent）
 
 ```js
@@ -269,21 +320,39 @@ agent: {
 
 **读回的限制**：读取依赖 `Ctrl+A`/`Ctrl+C` 选中"对话记录"。但聊天式界面（Cursor / Codex / 本仓库夹具）
 在 agent 回复完会把光标放回**输入框**——此时 `Ctrl+A` 选中的是空的输入框，复制不到东西。
-适配器已经做了三层处理：
+适配器做了五层处理：
 
 1. **哨兵校验**：复制前后写入唯一哨兵，若复制没发生就判定"读取失败"，
    而不是把**主人剪贴板里的旧内容**当成 agent 的回答（这是真实踩到的严重误判路径）；
-2. **点击对话区再读**：失败时先点 `options.readerClick`（默认窗口上方 1/3）再复制；
-3. **前台复查**：按 Ctrl+A/Ctrl+C 之前复查目标窗口仍是前台，防止主人中途切窗导致复制到别处。
+2. **对话区候选点**：失败时按候选点（`options.readerClick` → 默认 4 个位置，见
+   `resolveReaderClickCandidates`）依次"点一下 → 再复制"，捞到像对话记录的就停；
+   想更稳可以用 `options.readerClickPoints` 明确给出几个点；
+3. **可选 Esc 模糊**：`options.blurComposer: 'esc'` 会在读之前按一次 Esc 把焦点赶出输入框——
+   默认**关闭**，因为有些 agent 的 Esc 是"停止生成"，我们不能在它干活时把它按停；
+4. **前台复查**：按 Ctrl+A/Ctrl+C 之前复查目标窗口仍是前台，防止主人中途切窗导致复制到别处；
+5. **优先 `readerAdapter`**：能读磁盘（`cursor`/`dsh`）就不要用这套启发式。
 
 **要让它稳定工作，请显式配置 `readerClick` 指向对话记录区域**（例如窗口中部偏上），
 或者更推荐：配 `readerAdapter`（如 `cursor`/`dsh`）**直接读磁盘会话**——那是最准的，
-UI 只用来写入。纯 GUI 场景（没有任何可读的会话存储）下，读回仍是本通道最脆弱的一环，
-已在 `ROADMAP.md` 里列为待强化项。
+UI 只用来写入。纯 GUI 场景（没有任何可读的会话存储）下，读回仍是本通道最脆弱的一环。
 
-平台：目前只有 Windows（`src/ui/win/ui-driver.ps1`，用系统自带的 Windows PowerShell 5.1 +
-P/Invoke + UIA + SendInput，零 npm 依赖）。macOS/Linux 的驱动实现同一套命令
-（`idle/list-windows/focus/click/type/key/read-clipboard/write-clipboard/uia-elements`）即可接上。
+**草稿保护（v0.2 修复）**：焦点探针以前用"粘贴探针 → Ctrl+A → Delete"清理，
+这会把输入框里已有的草稿**一起删掉**（而调用方是在之后才检查"有没有草稿"的，来不及）。
+现在改为：先只读地看一眼焦点处的内容（读回来是整段对话就说明焦点不在输入框），
+粘贴探针后用 **Ctrl+Z 撤销**；如果读回的是"草稿 + 探针"，会明确报 `draft`，
+调用方**一个字符都不动**，直接放弃这一鞭（除非显式配置 `clearComposer: true`）。
+
+平台：Windows / macOS / Linux 三个驱动实现同一套接口（`src/ui/`）：
+
+| 平台 | 驱动实现 | 依赖 | 未实现的部分 |
+|---|---|---|---|
+| Windows | `src/ui/windows.mjs` + `win/ui-driver.ps1` | Windows PowerShell 5.1（UIA + SendInput） | — |
+| macOS | `src/ui/darwin.mjs` | `osascript`（System Events） | UI 元素树、截图/OCR |
+| Linux | `src/ui/linux.mjs` | `xdotool` + `xclip`/`xsel`/`wl-clipboard` | UI 元素树、截图/OCR；Wayland 需 XWayland |
+
+macOS 第一次用需要给终端/Node 开「辅助功能」权限；Linux 的键鼠空闲时间依赖 `xprintidle`，
+没有它时 `requireHumanIdleMs > 0` 会让通道**一直等**（宁可不动，也不在主人用电脑时抢焦点）。
+用 `cw doctor` / `cw windows` 可以直接看到本平台的结论与可操作提示。
 
 ---
 

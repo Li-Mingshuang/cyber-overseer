@@ -20,12 +20,12 @@
 import { createLogger } from '../util/log.mjs'
 import { hash, normalize } from '../util/text.mjs'
 import { sleep } from '../util/time.mjs'
-import { findWindow, describeWindows, createWindowsDriver } from '../ui/windows.mjs'
+import { findWindow, describeWindows, createUiDriver, uiPlatformInfo } from '../ui/index.mjs'
 import { probeFail, probeOk } from './base.mjs'
 
 export const id = 'human-sim'
 export const label = '拟人通道（模拟人类操作界面）'
-export const docs = 'UIA/剪贴板读对话框 + 抢焦点打字回车注入；带空闲保险丝'
+export const docs = '读对话框（剪贴板/UIA）+ 抢焦点打字回车注入；带空闲保险丝；Windows/macOS/Linux 各有驱动'
 
 /** 输入框位置的默认猜测：窗口底部居中（绝大多数聊天式 agent 的输入框都在那）。 */
 const DEFAULT_COMPOSER = { relX: 0.5, relY: 0.94 }
@@ -39,7 +39,13 @@ export function createHumanSimAdapter(ctx) {
   const log = ctx.log ?? createLogger({ level: 'warn' })
   const options = ctx.config.agent?.options ?? {}
   const guard = config.guard ?? {}
-  const driver = ctx.deps?.driver ?? createWindowsDriver({ log, scriptPath: options.driverScript })
+  // 驱动按平台挑（Windows/macOS/Linux 各有一套实现）；测试与脚本可以用 deps.driver 注入假的
+  const driver = ctx.deps?.driver ?? createUiDriver({
+    log,
+    platform: options.uiPlatform,
+    scriptPath: options.driverScript,
+    ...options,
+  })
   const state = {
     lastText: '',
     lastChangeAt: 0,
@@ -56,11 +62,12 @@ export function createHumanSimAdapter(ctx) {
     docs,
 
     async probe() {
-      if (process.platform !== 'win32') {
-        return probeFail('拟人通道目前只实现了 Windows（UIA + SendInput）', [
-          'macOS 可用 AppleScript/`osascript` 走同一套接口实现（欢迎 PR）',
-          'Linux 可用 xdotool/ydotool',
-        ])
+      const platformInfo = await uiPlatformInfo({ platform: driver.platform ?? process.platform, ...options })
+      if (driver.supported === false) {
+        return probeFail(driver.reason ?? `拟人通道在 ${driver.platform ?? process.platform} 上不可用`, platformInfo.hints ?? [])
+      }
+      if (!platformInfo.ok) {
+        return probeFail(`拟人通道在这台机器上不可用：${platformInfo.reason ?? platformInfo.label}`, platformInfo.hints ?? [])
       }
       if (!options.windowMatch || Object.keys(options.windowMatch).length === 0) {
         return probeFail('拟人通道必须配置目标窗口：agent.options.windowMatch = { title: "Cursor" }', [
@@ -69,7 +76,7 @@ export function createHumanSimAdapter(ctx) {
       }
       let idleMs = -1
       try { idleMs = await driver.idle() } catch (error) {
-        return probeFail(`UI 驱动不可用：${error?.message ?? error}`, ['确认能运行 powershell.exe（Windows PowerShell 5.1）'])
+        return probeFail(`UI 驱动不可用：${error?.message ?? error}`, platformInfo.hints ?? [])
       }
       const win = await findWindow(driver, options.windowMatch)
       if (!win) {
@@ -77,10 +84,11 @@ export function createHumanSimAdapter(ctx) {
         return probeFail(`找不到匹配窗口：${JSON.stringify(options.windowMatch)}`, ['当前可见窗口：', ...list])
       }
       state.lastWindow = win
-      const hints = []
+      const hints = [...(platformInfo.hints ?? [])]
       if (humanIdleMs === 0) hints.push('⚠️ humanIdleMs=0：主人在用电脑时也会抢焦点打字，极易误输入')
+      if (idleMs < 0) hints.push('⚠️ 读不到键鼠空闲时间（idle=-1）：requireHumanIdleMs > 0 时这一鞭会被放弃')
       if (options.verifyComposer === false) hints.push('⚠️ 已关闭回车前校验：万一焦点不对，鞭子可能发错地方')
-      return probeOk(`目标窗口：${win.process} — ${win.title}（${win.width}×${win.height}）；当前空闲 ${Math.round(idleMs / 1000)}s`, hints)
+      return probeOk(`${platformInfo.label}；目标窗口：${win.process} — ${win.title}（${win.width}×${win.height}）；当前空闲 ${Math.round(idleMs / 1000)}s`, hints)
     },
 
     async listSessions() {
@@ -103,7 +111,7 @@ export function createHumanSimAdapter(ctx) {
     },
 
     async readState(session) {
-      if (process.platform !== 'win32') return unknownState('拟人通道仅支持 Windows')
+      if (driver.supported === false) return unknownState(driver.reason ?? `拟人通道在 ${driver.platform ?? process.platform} 上不可用`)
       let win = session?.raw?.hwnd ? session.raw : null
       if (!win) win = await findWindow(driver, options.windowMatch)
       if (!win) return unknownState(`找不到目标窗口：${JSON.stringify(options.windowMatch)}`)
@@ -141,22 +149,41 @@ export function createHumanSimAdapter(ctx) {
       // 每一步都用 `plausibleTranscript` 检查"捞到的像不像对话记录"，避免把空字符串当答案。
       let text = ''
       let readVia = 'none'
+      // 可选：先按一次 Esc 把焦点从输入框赶走。默认**关闭**——有些 agent 的 Esc 是"停止生成"，
+      // 我们不能在它干活时把它按停。确定目标应用 Esc 只是"退出输入"的用户可以打开。
+      if (options.blurComposer === 'esc' || options.escapeBlursComposer === true) {
+        try {
+          await driver.key(0x1B)
+          await sleep(options.afterBlurMs ?? 180)
+          log.debug?.('已按 Esc 尝试把焦点移出输入框')
+        } catch (error) {
+          log.debug?.(`按 Esc 失败：${error?.message ?? error}`)
+        }
+      }
       try {
         text = await readTranscriptViaClipboard(driver, win)
         readVia = 'clipboard'
       } catch (error) {
         log.debug?.(`剪贴板读取失败：${error?.message ?? error}`)
       }
+      // 焦点被输入框抢走时，直接复制只会拿到"空的输入框"（看起来就像读不到对话）。
+      // 于是逐个尝试"对话区域的候选点"：每点一次就再复制一次，捞到像对话记录的就收工。
+      // 候选点是纯函数算出来的（见 resolveReaderClickCandidates），点位不对时也不会误发东西——
+      // 这里只读不写。
       if (!plausibleTranscript(text, state.lastInjected, options)) {
-        try {
-          const point = resolveReaderClickPoint(win, options)
-          const second = await readTranscriptViaClipboard(driver, win, point)
-          if (plausibleTranscript(second, state.lastInjected, options) || second.length > text.length) {
-            text = second
-            readVia = `clipboard+click(${point.x},${point.y})`
+        const candidates = resolveReaderClickCandidates(win, options)
+        for (const point of candidates) {
+          try {
+            const attempt = await readTranscriptViaClipboard(driver, win, point)
+            const better = plausibleTranscript(attempt, state.lastInjected, options) || attempt.length > text.length
+            if (better) {
+              text = attempt
+              readVia = `clipboard+click(${point.x},${point.y})`
+            }
+            if (plausibleTranscript(text, state.lastInjected, options)) break
+          } catch (error) {
+            log.debug?.(`点击对话区(${point.x},${point.y})后再读失败：${error?.message ?? error}`)
           }
-        } catch (error) {
-          log.debug?.(`点击对话区后再读失败：${error?.message ?? error}`)
         }
       }
       if (!plausibleTranscript(text, state.lastInjected, options)) {
@@ -172,9 +199,16 @@ export function createHumanSimAdapter(ctx) {
         }
       }
       if (!plausibleTranscript(text, state.lastInjected, options)) {
+        const tried = (readVia === 'none' ? ['直接复制'] : []).concat([
+          `${resolveReaderClickCandidates(win, options).length} 个对话区候选点`,
+          'UIA',
+        ])
         return unknownState(
-          `读不到对话框内容（试过直接复制 / 点击对话区后复制 / UIA，拿到 ${text.length} 字）`
-          + '——如果焦点始终在输入框里，请配置 agent.options.readerClick 指向对话区域',
+          `读不到对话框内容（试过：${tried.join(' / ')}，拿到 ${text.length} 字）`
+          + '——如果焦点始终被输入框占着，可以：① 配置 agent.options.readerClick 指向对话区域、'
+          + '② 配置 agent.options.readerClickPoints 多给几个候选点、'
+          + '③ 确认目标应用的 Esc 只是"退出输入"后设 agent.options.blurComposer = "esc"、'
+          + '④ 更稳的做法是给 agent.options.readerAdapter 配一个能读磁盘的适配器（如 cursor / dsh）',
           { readVia, window: win.title, chars: text.length },
         )
       }
@@ -206,8 +240,11 @@ export function createHumanSimAdapter(ctx) {
     },
 
     async whip(text, session, engineCtx) {
-      if (process.platform !== 'win32') {
-        return { ok: false, mode: 'inject', detail: '拟人通道仅支持 Windows' }
+      if (driver.supported === false) {
+        return {
+          ok: false, mode: 'inject', kind: 'setup',
+          detail: driver.reason ?? `拟人通道在 ${driver.platform ?? process.platform} 上不可用`,
+        }
       }
       const win = session?.raw?.hwnd ? session.raw : await findWindow(driver, options.windowMatch)
       if (!win) return { ok: false, mode: 'inject', detail: `找不到目标窗口：${JSON.stringify(options.windowMatch)}` }
@@ -262,6 +299,23 @@ export function createHumanSimAdapter(ctx) {
         }
 
         const probe = await probeComposerFocus(driver, `${options.focusProbeToken ?? 'cwprobe'}`)
+        // 输入框里有主人的草稿：探针一个字符都没动它。要么按配置清空，要么放弃这一鞭。
+        if (probe.draft) {
+          if (options.clearComposer === true) {
+            await driver.key(0x41, { ctrl: true }) // Ctrl+A
+            await driver.key(0x2E)                 // Delete
+            await sleep(120, engineCtx?.signal).catch(() => {})
+            attempts[attempts.length - 1] += '(草稿已按 clearComposer 清空)'
+            focused = true
+            break
+          }
+          await restore(driver, prevClipboard, prevForeground, options, engineCtx)
+          return {
+            ok: false, mode: 'inject', kind: 'setup',
+            detail: `输入框里已有内容（${probe.readLength} 字，像是主人的草稿），为不破坏它，本次不注入。`
+              + '（如果那是上次失败的残留，把 agent.options.clearComposer 设为 true）',
+          }
+        }
         attempts[attempts.length - 1] += probe.focused ? '(命中)' : `(未命中:${probe.readLength})`
         if (probe.focused) { focused = true; break }
         log.debug?.(`${attempts.at(-1)}：没把焦点送进输入框（探针读回 ${probe.readLength} 字），换下一个候选点`)
@@ -344,7 +398,7 @@ export function createHumanSimAdapter(ctx) {
     async capabilities() {
       const win = await findWindow(driver, options.windowMatch).catch(() => null)
       return [
-        `平台：${process.platform}`,
+        `平台：${driver.platform ?? process.platform}（驱动${driver.supported === false ? '不可用' : '可用'}）`,
         `目标窗口：${win ? `${win.process} — ${win.title}` : `未找到（${JSON.stringify(options.windowMatch)}）`}`,
         `输入方式：${options.inputMode ?? 'paste'}（剪贴板粘贴 + 回车）`,
         `读取方式：${options.readerAdapter ? `磁盘（${options.readerAdapter}）` : '剪贴板 / UIA'}`,
@@ -487,40 +541,51 @@ export function createHumanSimAdapter(ctx) {
   }
 
   /**
-   * 焦点探测：往当前焦点粘贴一个短"探针令牌"，再用 Ctrl+A/Ctrl+C 读回来。
+   * 焦点探测：当前焦点是不是在输入框里？顺便看一眼里面有没有主人的草稿。
    *
-   * 为什么需要它：`Ctrl+A` 在**没进输入框**时会选中整页文字（实测 2754 字），
-   * 而某些情况下复制又什么都没拿到（读回空字符串）——"空"既可能是"输入框是空的"，
-   * 也可能是"焦点压根不在任何可编辑区域"。粘贴探针能把这个歧义消掉：
-   * 读回 == 探针 → 焦点确实在输入框里；读回是整页文字或空 → 没进去。
+   * 判据：往焦点粘贴一个短"探针令牌"，再用 Ctrl+A/Ctrl+C 读回来——
+   *   - 读回里**包含**探针 → 焦点确实在输入框里（探针落进去了）；
+   *   - 读回的是整段对话 → 焦点不在输入框（我们只读地先看过一次）；
+   *   - 读回既没有探针也没有内容 → 复制没发生，按"没进去"处理。
    *
-   * 探针本身很脏吗？不：它是一小段临时文本，确认/放弃后都会立刻清空（Ctrl+A + Delete）。
-   * 这比"直接粘贴真正的鞭子然后发现发错地方"安全得多。
+   * ⚠️ 与旧实现的区别（两个重要修复）：
+   *  1. **不再用"Ctrl+A + Delete"清理探针**，改用 **Ctrl+Z 撤销**——旧写法会把输入框里
+   *     已有的草稿一起删掉，而调用方是在之后才检查"有没有草稿"的，已经来不及；
+   *  2. 读回内容 = 草稿 + 探针时，会明确返回 `draft:true`，让调用方**不动那个草稿**。
    *
    * @param {any} drv
    * @param {string} token
-   * @returns {Promise<{focused:boolean, readLength:number, read:string}>}
+   * @returns {Promise<{focused:boolean, readLength:number, read:string, draft?:boolean, reason?:string}>}
    */
   async function probeComposerFocus(drv, token) {
     const prev = await drv.readClipboard().catch(() => '')
     try {
+      // 1) 只读地先看一眼焦点处：读回来是整段对话 → 焦点压根不在输入框，别浪费一次粘贴
+      const before = await copyFocusedText(drv)
+      if (before.copied && plausibleTranscript(before.text, state.lastInjected, options)) {
+        return { focused: false, readLength: before.text.length, read: '', reason: '焦点不在输入框（复制到的是对话内容）' }
+      }
+      const preexisting = before.copied ? before.text : ''
+
+      // 2) 粘贴探针并读回
       if (!(await writeClipboardVerified(drv, token))) {
         return { focused: false, readLength: -1, read: '', reason: '剪贴板写入失败' }
       }
       await drv.key(0x56, { ctrl: true })     // Ctrl+V
       await sleep(140)
-      await drv.key(0x41, { ctrl: true })     // Ctrl+A（选中刚才粘贴的内容）
+      await drv.key(0x41, { ctrl: true })     // Ctrl+A（选中刚粘贴的内容）
       await sleep(100)
       await drv.key(0x43, { ctrl: true })     // Ctrl+C
       await sleep(220)
       const read = (await drv.readClipboard().catch(() => '')) ?? ''
-      const focused = sameMessage(read, token)
-      // 无论成没成，都把探针清掉（如果它落在错误的地方，也顺手帮主人清掉这点垃圾）
-      await drv.key(0x41, { ctrl: true })
-      await sleep(80)
-      await drv.key(0x2E)                     // Delete
-      await sleep(100)
-      return { focused, readLength: read.length, read }
+      const focused = read.includes(token)
+      const draftText = focused && !sameMessage(read, token) ? read.split(token).join('') : preexisting
+      const draft = Boolean(String(draftText ?? '').trim())
+
+      // 3) 撤销这次粘贴（空输入框下是无操作；有草稿时正好恢复原状）
+      await drv.key(0x5A, { ctrl: true })     // Ctrl+Z
+      await sleep(120)
+      return { focused, readLength: read.length, read, draft }
     } finally {
       if (options.restoreClipboard !== false) await drv.writeClipboard(prev).catch(() => {})
     }
@@ -647,6 +712,53 @@ export function resolveReaderClickPoint(win, options = {}) {
     x: Math.round(left + (win.width ?? 800) * relX),
     y: Math.round(top + (win.height ?? 600) * relY),
   }
+}
+
+/**
+ * "对话区域"的**一串**候点击点。
+ *
+ * 为什么需要一串：真实 UI 里"对话区在哪"并不固定（顶部标题栏、侧边栏、多行布局、
+ * 全屏/半屏都会影响），一个点猜不中就会一直读到空的输入框。这里给出一串候选，
+ * 调用方挨个点、挨个读，捞到像对话记录的就停；都失败也只是"这一轮读不到"，
+ * 不会写错任何东西（读路径只读）。
+ *
+ * 用户可用 `agent.options.readerClickPoints = [{relX,relY}, {x,y}, ...]` 自己指定候选；
+ * 绝对坐标（`{x,y}`）被视为"我很确定"，只用那一个点。
+ *
+ * @param {any} win
+ * @param {any} options
+ * @returns {{x:number, y:number}[]}
+ */
+export function resolveReaderClickCandidates(win, options = {}) {
+  const configured = options.readerClick
+  if (configured && typeof configured.x === 'number' && typeof configured.y === 'number') {
+    return [{ x: Math.round(configured.x), y: Math.round(configured.y) }]
+  }
+  const extra = Array.isArray(options.readerClickPoints)
+    ? options.readerClickPoints.filter(p => p && typeof p === 'object')
+    : []
+  const specs = [
+    ...extra,
+    { relX: configured?.relX ?? 0.5, relY: configured?.relY ?? 0.35 },
+    { relX: 0.5, relY: 0.6 },
+    { relX: 0.3, relY: 0.35 },
+    { relX: 0.7, relY: 0.35 },
+    { relX: 0.5, relY: 0.78 },
+  ]
+  const [left, top] = win.rect ?? [0, 0]
+  const width = win.width ?? 800
+  const height = win.height ?? 600
+  const seen = new Set()
+  const points = []
+  for (const spec of specs) {
+    const x = Number.isFinite(spec.x) ? Math.round(spec.x) : Math.round(left + width * (spec.relX ?? 0.5))
+    const y = Number.isFinite(spec.y) ? Math.round(spec.y) : Math.round(top + height * (spec.relY ?? 0.35))
+    const key = `${x},${y}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    points.push({ x, y })
+  }
+  return points.slice(0, Math.max(1, options.maxReaderAttempts ?? 4))
 }
 
 /**
