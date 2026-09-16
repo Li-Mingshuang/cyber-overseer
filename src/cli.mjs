@@ -106,6 +106,8 @@ export async function main(argv = process.argv.slice(2)) {
     case 'hooks': return cmdHooks({ log, cwd, flags, positional })
     case 'hook': return cmdHook({ log, cwd, flags, positional })
     case 'mcp': return cmdMcp({ log, config, cwd, flags })
+    case 'ui':
+    case 'web': return cmdUi({ log, cwd, flags })
     case 'run':
     case 'watch': {
       if (command === 'watch') config.runtime.dryRun = true
@@ -134,6 +136,11 @@ function buildOverrides(flags) {
   if (flags.agent) overrides.agent = { ...(overrides.agent ?? {}), adapter: String(flags.agent) }
   if (flags.session) overrides.agent = { ...(overrides.agent ?? {}), session: String(flags.session) }
   if (flags.plan) overrides.plan = String(flags.plan)
+  // 下面几个是给"界面/脚本以项目目录为工作目录启动监工"用的：显式钉住路径，
+  // 免得项目配置里写的相对路径（往往是相对仓库根）被拼重。
+  if (flags.report) overrides.journal = { ...(overrides.journal ?? {}), reportFile: String(flags.report) }
+  if (flags['journal-dir']) overrides.journal = { ...(overrides.journal ?? {}), dir: String(flags['journal-dir']) }
+  if (flags['state-file']) overrides.runtime = { ...(overrides.runtime ?? {}), stateFile: String(flags['state-file']) }
   if (flags.judge) overrides.judge = { ...(overrides.judge ?? {}), kind: String(flags.judge) }
   if (flags.model) overrides.judge = { ...(overrides.judge ?? {}), llm: { ...(overrides.judge?.llm ?? {}), model: String(flags.model) } }
   if (flags['max-rounds']) overrides.guard = { ...(overrides.guard ?? {}), maxRounds: Number(flags['max-rounds']) }
@@ -160,7 +167,8 @@ function printHelp(log) {
 
 用法：cw <命令> [选项]
 
-  cw run              开始监工（默认；判定→抽鞭→再判定，直到方案完成或触发护栏）
+  cw ui               打开本地图形界面（推荐日常用；只监听 127.0.0.1，零依赖）
+  cw run              开始监工（判定→抽鞭→再判定，直到方案完成或触发护栏）
   cw watch            演练模式：只判定、只打印要抽的鞭子，不真的注入
   cw judge            只判定一次并打印结论
   cw whip "<文本>"    手动抽一鞭（调试注入通道）
@@ -572,6 +580,42 @@ async function cmdMcp({ log, config, cwd, flags }) {
   if (!flags.serve) { log.error('用法：cw mcp --serve（stdio 服务端）'); return 2 }
   const { serveMcpMailbox } = await import('./adapters/mcp-mailbox.mjs')
   await serveMcpMailbox({ cwd, log })
+  return 0
+}
+
+/**
+ * cw ui —— 本地 Web 界面（零依赖，只监听 127.0.0.1）。
+ *
+ * 界面做的事：选项目 → 写方案 → 选 agent 与验收命令 → 点开始 → 看实时判定/鞭子/报告。
+ * 监工进程由界面服务作为子进程启动，所以刷新或关掉页面都不影响正在跑的监工。
+ */
+async function cmdUi({ log, cwd, flags }) {
+  const { startWebUi, DEFAULT_PORT } = await import('./web/server.mjs')
+  const port = Number(flags.port ?? DEFAULT_PORT)
+  const host = String(flags.host ?? '127.0.0.1')
+  if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
+    log.warn(`界面只能监听本机地址（请求的是 ${host}）。这是刻意的安全边界：界面能启动监工、改写方案文档。`)
+    return 2
+  }
+  const ui = await startWebUi({
+    cwd,
+    port,
+    host,
+    log,
+    open: flags['no-open'] !== true,
+    token: typeof flags.token === 'string' ? flags.token : null,
+  })
+  log.raw('')
+  log.raw(`  界面地址：${ui.url}`)
+  log.raw(`  项目目录：${cwd}（也可以在页面里换）`)
+  log.raw('  按 Ctrl+C 退出界面（正在跑的监工不会被杀，可在页面上点「停止」）')
+  log.raw('')
+  // 保持进程存活直到中断
+  await new Promise((resolveHold) => {
+    const stop = () => { ui.close().then(resolveHold).catch(resolveHold) }
+    process.once('SIGINT', stop)
+    process.once('SIGTERM', stop)
+  })
   return 0
 }
 

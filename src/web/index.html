@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>赛博监工 · Cyber Overseer</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel2: #1e222b; --line: #2a2f3a;
+    --fg: #e6e9ef; --dim: #9aa3b2; --accent: #ff5a3c; --ok: #35c46b; --warn: #f0b429; --bad: #ef4b6b;
+    --mono: ui-monospace, SFMono-Regular, Consolas, "Cascadia Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.6 system-ui, "Microsoft YaHei UI", sans-serif; }
+  header { display: flex; gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; white-space: nowrap; }
+  header .whip { color: var(--accent); }
+  input, select, textarea, button { font: inherit; color: var(--fg); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+  input, textarea { width: 100%; }
+  textarea { resize: vertical; font-family: var(--mono); font-size: 13px; line-height: 1.5; }
+  button { cursor: pointer; white-space: nowrap; }
+  button:hover { border-color: #3b424f; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.ghost { background: transparent; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  main { display: grid; grid-template-columns: minmax(360px, 1fr) minmax(420px, 1.15fr); gap: 14px; padding: 14px 16px 40px; align-items: start; }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+  section.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
+  section.card > h2 { font-size: 13px; text-transform: none; letter-spacing: .02em; color: var(--dim); margin: 0 0 10px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  label.f { display: block; color: var(--dim); font-size: 12px; margin: 6px 0 2px; }
+  .pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); color: var(--dim); }
+  .pill.ok { color: var(--ok); border-color: #245c3c; }
+  .pill.bad { color: var(--bad); border-color: #5c2434; }
+  .pill.warn { color: var(--warn); border-color: #5c4a24; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); display: inline-block; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); animation: pulse 1.4s infinite; }
+  @keyframes pulse { 50% { opacity: .35 } }
+  .progress { height: 8px; background: var(--panel2); border-radius: 999px; overflow: hidden; border: 1px solid var(--line); }
+  .progress > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), #ffa06b); }
+  .list { max-height: 320px; overflow: auto; }
+  .ev { border-left: 2px solid var(--line); padding: 6px 0 6px 10px; margin: 6px 0; }
+  .ev.continue { border-color: var(--accent); }
+  .ev.done { border-color: var(--ok); }
+  .ev.blocked, .ev.error { border-color: var(--bad); }
+  .ev.needs-human { border-color: var(--warn); }
+  .ev .meta { color: var(--dim); font-size: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .ev pre { white-space: pre-wrap; margin: 6px 0 0; font-family: var(--mono); font-size: 12px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px; max-height: 220px; overflow: auto; }
+  pre.log { margin: 0; max-height: 240px; overflow: auto; font-family: var(--mono); font-size: 12px; background: #0b0d11; border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+  pre.log .err { color: var(--bad); } pre.log .sys { color: var(--warn); } pre.log .out { color: var(--fg); }
+  .muted { color: var(--dim); font-size: 12px; }
+  .toolbar { position: sticky; bottom: 0; background: linear-gradient(180deg, transparent, var(--bg) 40%); padding: 10px 0 0; }
+  details > summary { cursor: pointer; color: var(--dim); }
+  .adapters { display: grid; gap: 6px; }
+  .adapter { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; font-size: 12px; }
+  .adapter .name { white-space: nowrap; }
+  .adapter .detail { color: var(--dim); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 62%; }
+  .toast { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 20; }
+  .toast div { background: var(--panel2); border: 1px solid var(--line); border-left: 3px solid var(--accent); padding: 8px 12px; border-radius: 8px; max-width: 380px; }
+  .warnbox { border: 1px solid #5c4a24; background: #241f12; color: #f5d08a; padding: 8px 10px; border-radius: 8px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>赛博<span class="whip">监工</span></h1>
+  <div class="row" style="flex:1; min-width:280px">
+    <select id="recent" style="max-width:230px" title="最近使用 / 建议"></select>
+    <input id="cwd" placeholder="项目目录（绝对路径）" spellcheck="false">
+    <button id="load" class="ghost">打开</button>
+  </div>
+  <span class="pill" id="runState"><span class="dot" id="runDot"></span><span id="runText">未运行</span></span>
+  <button id="initBtn" class="ghost" title="在目录里生成 PLAN.md 与 .cyber/">初始化</button>
+</header>
+
+<main>
+  <div>
+    <section class="card">
+      <h2>
+        <span>① 方案文档 <span class="muted" id="planFile"></span></span>
+        <span class="row">
+          <span class="muted" id="planProgressText">—</span>
+          <button id="savePlan" class="ghost">保存</button>
+        </span>
+      </h2>
+      <div class="progress" style="margin-bottom:8px"><i id="planBar" style="width:0%"></i></div>
+      <textarea id="planText" rows="16" placeholder="点「初始化」生成模板，或直接在这里写方案文档"></textarea>
+      <div id="planParsed" class="muted" style="margin-top:8px"></div>
+      <div class="row" style="margin-top:8px">
+        <button id="judgeBtn" class="ghost" title="只读地判一次，不注入任何内容">预览判定</button>
+        <span class="muted">判定基于方案勾选 + 验收命令 + 工作区改动</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>③ 监工日志 <span class="muted">（子进程输出）</span></h2>
+      <pre class="log" id="log">（未运行）</pre>
+    </section>
+
+    <section class="card">
+      <h2>④ 报告 <span class="muted">CW-REPORT.md</span> <button id="refreshReport" class="ghost">刷新</button></h2>
+      <pre class="log" id="report">（还没有报告：跑一次监工就会生成）</pre>
+    </section>
+  </div>
+
+  <div>
+    <section class="card">
+      <h2>② 监工谁、怎么抽 <span class="muted" id="configSource"></span></h2>
+      <div class="grid2">
+        <div>
+          <label class="f">适配器（agent）</label>
+          <select id="adapter"></select>
+        </div>
+        <div>
+          <label class="f">判定器</label>
+          <select id="judgeKind">
+            <option value="chain">chain（规则优先，判不了才问模型）</option>
+            <option value="rule">rule（零成本、离线可用）</option>
+            <option value="llm">llm（每轮都问模型）</option>
+            <option value="human">human（交给主人裁决）</option>
+          </select>
+        </div>
+      </div>
+      <div id="adapterDetail" class="muted" style="margin-top:6px"></div>
+
+      <label class="f">验收命令（每行一条；判定"干完没有"最硬的证据）</label>
+      <textarea id="verify" rows="3" placeholder="npm test&#10;node verify.mjs"></textarea>
+
+      <div class="grid3" style="margin-top:8px">
+        <div>
+          <label class="f">最多抽几鞭</label>
+          <input id="maxRounds" type="number" min="1" value="12">
+        </div>
+        <div>
+          <label class="f">无进展几轮就停</label>
+          <input id="maxStall" type="number" min="1" value="3">
+        </div>
+        <div>
+          <label class="f">抽鞭休息（秒）</label>
+          <input id="cooldown" type="number" min="0" value="5">
+        </div>
+      </div>
+
+      <label class="f">只在主人休息时动手（静默期，可留空）</label>
+      <div class="grid2">
+        <input id="quietFrom" placeholder="23:00">
+        <input id="quietTo" placeholder="08:00">
+      </div>
+
+      <details style="margin-top:10px">
+        <summary>适配器专属设置（DSH / Cursor / 拟人通道 …）</summary>
+        <div class="grid2" style="margin-top:8px">
+          <div>
+            <label class="f">DSH 抽鞭模式</label>
+            <select id="dshWhip">
+              <option value="headless">headless（每次干净劳工，推荐无人值守）</option>
+              <option value="http">http（插进正在跑的会话）</option>
+              <option value="human-sim">human-sim（在 GUI 里打字）</option>
+            </select>
+          </div>
+          <div>
+            <label class="f">Cursor 抽鞭模式</label>
+            <select id="cursorWhip">
+              <option value="hooks">hooks（官方钩子，最干净）</option>
+              <option value="desktop-bridge">desktop-bridge（需开 Beta 开关）</option>
+              <option value="human-sim">human-sim（抢焦点打字）</option>
+            </select>
+          </div>
+        </div>
+        <div class="grid2" style="margin-top:8px">
+          <div>
+            <label class="f">拟人通道：目标窗口（进程名或标题）</label>
+            <input id="windowTitle" placeholder="Cursor / Chrome / Codex">
+          </div>
+          <div>
+            <label class="f">拟人通道：键盘空闲阈值（秒）</label>
+            <input id="humanIdle" type="number" min="0" value="120">
+          </div>
+        </div>
+        <label class="f">拟人通道：读取用哪个适配器读磁盘（最准，留空=用剪贴板）</label>
+        <input id="readerAdapter" placeholder="cursor / dsh / codex / opencode">
+      </details>
+
+      <div class="row" style="margin-top:10px">
+        <button id="saveConfig" class="ghost">保存配置</button>
+        <span class="muted" id="configNote"></span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>跑起来</h2>
+      <div class="row toolbar">
+        <button id="start" class="primary">开始监工</button>
+        <button id="watch">演练（只判定不注入）</button>
+        <button id="stop">停止</button>
+        <button id="pause">暂停</button>
+        <button id="resume">继续</button>
+      </div>
+      <div class="warnbox" style="margin-top:10px">
+        无人值守前请确认：<b>验收命令</b>填对了、<b>最多抽几鞭</b>与<b>静默期</b>符合预期；
+        agent 侧的审批策略（如 codex 的 approval_policy）由你决定，监工不会替你点"同意"。
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>这一轮轮都发生了什么 <span class="muted" id="roundInfo"></span></h2>
+      <div class="list" id="timeline"><span class="muted">还没有记录。</span></div>
+    </section>
+
+    <section class="card">
+      <h2>这台机器能监工谁</h2>
+      <div class="adapters" id="adapters"><span class="muted">探测中…</span></div>
+    </section>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id)
+let CWD = localStorage.getItem('cw.cwd') || ''
+let running = false
+let lastLineAt = 0
+let pollTimer = null
+let adapters = []
+
+function toast(message, kind = 'ok') {
+  const box = document.createElement('div')
+  box.textContent = message
+  box.style.borderLeftColor = kind === 'bad' ? 'var(--bad)' : (kind === 'warn' ? 'var(--warn)' : 'var(--accent)')
+  $('toast').appendChild(box)
+  setTimeout(() => box.remove(), 4200)
+}
+
+async function api(path, body) {
+  const url = path + (path.includes('?') ? '&' : '?') + 'cwd=' + encodeURIComponent(CWD)
+  const res = await fetch(url, body === undefined ? {} : {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cwd: CWD, ...body }),
+  })
+  const data = await res.json().catch(() => ({ ok: false, error: '响应不是 JSON' }))
+  if (!res.ok || data.ok === false) throw new Error(data.error || ('HTTP ' + res.status))
+  return data
+}
+
+// ---------- 配置 ↔ 表单 ----------
+function configFromForm() {
+  const verify = $('verify').value.split('\n').map(s => s.trim()).filter(Boolean)
+  const quietFrom = $('quietFrom').value.trim(), quietTo = $('quietTo').value.trim()
+  const adapter = $('adapter').value
+  const options = {}
+  if (adapter === 'dsh') options.whip = $('dshWhip').value
+  if (adapter === 'cursor') options.whip = $('cursorWhip').value
+  if (adapter === 'human-sim') {
+    const w = $('windowTitle').value.trim()
+    options.windowMatch = w ? (depthGuess(w)) : undefined
+    options.humanIdleMs = Number($('humanIdle').value || 120) * 1000
+    const reader = $('readerAdapter').value.trim()
+    if (reader) options.readerAdapter = reader
+  }
+  return {
+    agent: { adapter, options },
+    judge: { kind: $('judgeKind').value },
+    evidence: { git: true, verify },
+    guard: {
+      maxRounds: Number($('maxRounds').value || 12),
+      maxStallRounds: Number($('maxStall').value || 3),
+      cooldownMs: Number($('cooldown').value || 5) * 1000,
+      quietHours: quietFrom && quietTo ? { from: quietFrom, to: quietTo } : null,
+      requireHumanIdleMs: Number($('humanIdle').value || 120) * 1000,
+    },
+  }
+}
+function depthGuess(value) {
+  // 简单判断：像路径/带后缀的当标题，纯单词当进程名
+  return /[\\/.]/.test(value) ? { title: value } : { process: value }
+}
+function applyConfig(config) {
+  const c = config || {}
+  if (c.agent?.adapter) $('adapter').value = c.agent.adapter
+  if (c.judge?.kind) $('judgeKind').value = c.judge.kind
+  $('verify').value = (c.evidence?.verify ?? []).join('\n')
+  if (c.guard?.maxRounds) $('maxRounds').value = c.guard.maxRounds
+  if (c.guard?.maxStallRounds) $('maxStall').value = c.guard.maxStallRounds
+  if (c.guard?.cooldownMs !== undefined) $('cooldown').value = Math.round(c.guard.cooldownMs / 1000)
+  $('quietFrom').value = c.guard?.quietHours?.from ?? ''
+  $('quietTo').value = c.guard?.quietHours?.to ?? ''
+  const o = c.agent?.options ?? {}
+  if (o.whip) { $('dshWhip').value = o.whip; $('cursorWhip').value = o.whip }
+  const w = o.windowMatch ?? {}
+  $('windowTitle').value = w.process ?? w.title ?? ''
+  if (o.humanIdleMs !== undefined) $('humanIdle').value = Math.round(o.humanIdleMs / 1000)
+  $('readerAdapter').value = o.readerAdapter ?? ''
+}
+
+// ---------- 渲染 ----------
+function renderPlan(state) {
+  $('planText').value = state.planText ?? ''
+  $('planFile').textContent = state.planFile ? `（${state.planFile}）` : '（还没有 PLAN.md）'
+  const p = state.plan
+  if (!p) { $('planProgressText').textContent = '—'; $('planBar').style.width = '0%'; $('planParsed').textContent = '' ; return }
+  const total = p.totalCount ?? 0, done = p.doneCount ?? 0
+  $('planProgressText').textContent = total ? `${done}/${total} 已勾选` : '没有任务清单'
+  $('planBar').style.width = total ? Math.round(done / total * 100) + '%' : '0%'
+  const bits = []
+  if (p.title) bits.push(`标题：${p.title}`)
+  if (p.acceptance?.length) bits.push(`验收标准 ${p.acceptance.length} 条`)
+  else bits.push('⚠ 没写「验收标准」：判定会变弱')
+  if (!total) bits.push('⚠ 没有 `- [ ]` 任务清单：规则判定无从核对')
+  if (p.pluginHack) void p.pluginHack
+  $('planParsed').innerHTML = bits.map(b => `<div>${escapeHtml(b)}</div>`).join('')
+    + (p.emptyTodos?.length ? `<details style="margin-top:6px"><summary>还剩 ${p.emptyTodos.length} 项没做</summary><div class="muted">${p.emptyTodos.slice(0, 30).map(t => '□ ' + escapeHtml(t)).join('<br>')}</div></details>` : '')
+}
+
+function renderRun(state) {
+  const sup = state.supervisor ?? {}
+  running = Boolean(sup.running)
+  $('runDot').className = 'dot' + (running ? ' on' : '')
+  const run = state.run
+  $('runText').textContent = running
+    ? (sup.dryRun ? '演练中' : '监工中') + ` pid=${sup.pid}`
+    : (run ? `${run.status}${run.stopReason ? '（' + run.stopReason + '）' : ''}` : '未运行')
+  $('start').disabled = running
+  $('watch').disabled = running
+  $('stop').disabled = !running
+  $('roundInfo').textContent = run ? `轮次 ${run.rounds}｜花费 $${(run.costUsd ?? 0).toFixed(4)}${state.paused ? '｜已暂停' : ''}` : (state.paused ? '已暂停' : '')
+}
+
+function renderTimeline(journal) {
+  const events = (journal ?? []).filter(e => e.kind === 'verdict' || e.kind === 'whip' || e.kind === 'guard' || e.kind === 'stop' || e.kind === 'error' || e.kind === 'plan-reload')
+  if (!events.length) { $('timeline').innerHTML = '<span class="muted">还没有记录。</span>'; return }
+  const html = []
+  for (const e of events.slice(-40).reverse()) {
+    if (e.kind === 'verdict') {
+      html.push(`<div class="ev ${e.status}">
+        <div><b>第 ${e.round} 轮判定：${e.status}</b> <span class="muted">置信度 ${(e.confidence ?? 0).toFixed(2)}｜${e.judge ?? ''}</span></div>
+        <div class="meta">${escapeHtml(e.reason ?? '')}</div>
+        ${e.nextPrompt ? `<pre>${escapeHtml(e.nextPrompt)}</pre>` : ''}
+      </div>`)
+    } else if (e.kind === 'whip') {
+      html.push(`<div class="ev"><div class="meta">已抽鞭（第 ${e.round ?? '?'} 轮，${e.chars ?? 0} 字）</div><pre>${escapeHtml(e.whip ?? '')}</pre></div>`)
+    } else if (e.kind === 'plan-reload') {
+      html.push(`<div class="ev"><div class="meta">方案文档更新：勾选 ${e.done}/${e.total}</div></div>`)
+    } else if (e.kind === 'guard') {
+      html.push(`<div class="ev needs-human"><div class="meta">护栏触发：${escapeHtml(JSON.stringify(e).slice(0, 200))}</div></div>`)
+    } else if (e.kind === 'error') {
+      html.push(`<div class="ev error"><div class="meta">错误：${escapeHtml(e.message ?? '')}</div></div>`)
+    } else if (e.kind === 'stop') {
+      html.push(`<div class="ev done"><div class="meta">结束：${escapeHtml(e.reason ?? '')}</div></div>`)
+    }
+  }
+  $('timeline').innerHTML = html.join('')
+}
+
+function renderLog(lines) {
+  if (!lines?.length) return
+  lastLineAt = Math.max(lastLineAt, ...lines.map(l => l.at))
+  const box = $('log')
+  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 20
+  for (const line of lines) {
+    const span = document.createElement('div')
+    span.className = line.stream === 'err' ? 'err' : (line.stream === 'sys' ? 'sys' : 'out')
+    span.textContent = line.text
+    box.appendChild(span)
+  }
+  while (box.childNodes.length > 600) box.removeChild(box.firstChild)
+  if (atBottom) box.scrollTop = box.scrollHeight
+}
+
+async function renderAdapters(cwd) {
+  try {
+    const data = await fetch('/api/adapters?cwd=' + encodeURIComponent(cwd)).then(r => r.json())
+    adapters = data.adapters ?? []
+    $('adapters').innerHTML = adapters.map(a => `<div class="adapter">
+      <span class="name">${a.ok ? '✔' : '·'} <b>${escapeHtml(a.id)}</b> ${escapeHtml(a.label ?? '')}</span>
+      <span class="detail" title="${escapeHtml(a.detail ?? '')}">${escapeHtml(a.detail ?? '')}</span>
+    </div>`).join('')
+    const select = $('adapter')
+    const current = select.value
+    select.innerHTML = adapters.map(a => `<option value="${a.id}"${a.ok ? '' : ' data-off="1"'}>${escapeHtml(a.id)}${a.ok ? '' : '（本机不可用）'} — ${escapeHtml(a.label ?? '')}</option>`).join('')
+    if (current) select.value = current
+  } catch (error) {
+    $('adapters').innerHTML = `<span class="muted">探测失败：${escapeHtml(error.message)}</span>`
+  }
+}
+
+function renderAdapterDetail() {
+  const hit = adapters.find(a => a.id === $('adapter').value)
+  $('adapterDetail').innerHTML = hit
+    ? `${escapeHtml(hit.channel ?? '')}${hit.note ? '｜' + escapeHtml(hit.note) : ''}`
+      + (hit.hints?.length ? `<div class="muted">${hit.hints.map(h => '↳ ' + escapeHtml(h)).join('<br>')}</div>` : '')
+    : ''
+}
+
+async function refresh(full = true) {
+  if (!CWD) return
+  try {
+    const state = await api('/api/state')
+    renderPlan(state)
+    renderRun(state)
+    renderTimeline(state.journal)
+    if (full) {
+      $('configSource').textContent = state.configSource?.kind === 'handwritten'
+        ? '（手写 cw.config.mjs：只展示不覆盖）'
+        : (state.configSource?.kind === 'ui' ? '（界面配置 .cyber/ui.config.json）' : '（默认配置）')
+      $('configNote').textContent = state.note ?? ''
+      applyConfig(state.config)
+      $('saveConfig').disabled = state.editable === false
+    }
+    const sup = state.supervisor ?? {}
+    if (sup.lines?.length) renderLog(sup.lines)
+    schedule( sup.running ? 1500 : 6000)
+  } catch (error) {
+    toast('读取状态失败：' + error.message, 'bad')
+    schedule(6000)
+  }
+}
+
+function schedule(ms) {
+  clearTimeout(pollTimer)
+  pollTimer = setTimeout(() => refresh(false), ms)
+}
+
+function escapeHtml(text) {
+  return String(text ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+}
+
+// ---------- 交互 ----------
+async function loadProject(cwd) {
+  CWD = cwd.trim()
+  if (!CWD) return
+  localStorage.setItem('cw.cwd', CWD)
+  $('cwd').value = CWD
+  lastLineAt = 0
+  $('log').innerHTML = ''
+  $('report').textContent = '（加载中…）'
+  await Promise.all([refresh(true), renderAdapters(CWD), refreshReport()])
+}
+
+async function refreshReport() {
+  try {
+    const data = await api('/api/report')
+    $('report').textContent = data.exists ? data.text : '（还没有报告：跑一次监工就会生成）'
+  } catch { /* 忽略 */ }
+}
+
+async function loadProjects() {
+  try {
+    const data = await fetch('/api/projects').then(r => r.json())
+    const options = []
+    for (const p of data.projects ?? []) options.push(`<option value="${escapeHtml(p)}">最近：${escapeHtml(p.split(/[\\/]/).pop())}</option>`)
+    for (const s of data.suggested ?? []) options.push(`<option value="${escapeHtml(s.cwd)}">${s.hasPlan ? '★ ' : ''}${escapeHtml(s.name)}</option>`)
+    $('recent').innerHTML = '<option value="">最近/建议…</option>' + options.join('')
+  } catch { /* 忽略 */ }
+}
+
+$('recent').addEventListener('change', (e) => { if (e.target.value) loadProject(e.target.value) })
+$('load').addEventListener('click', () => loadProject($('cwd').value))
+$('cwd').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadProject($('cwd').value) })
+$('adapter').addEventListener('change', renderAdapterDetail)
+
+$('savePlan').addEventListener('click', async () => {
+  try { const r = await api('/api/plan', { text: $('planText').value }); toast('方案已保存：' + r.planFile); refresh(true) }
+  catch (error) { toast('保存失败：' + error.message, 'bad') }
+})
+$('saveConfig').addEventListener('click', async () => {
+  try { await api('/api/config', { config: configFromForm() }); toast('配置已保存'); refresh(true) }
+  catch (error) { toast('保存失败：' + error.message, 'bad') }
+})
+$('initBtn').addEventListener('click', async () => {
+  if (!CWD) return toast('先填一个项目目录', 'warn')
+  try { const r = await api('/api/init'); toast(r.createdPlan ? '已生成 PLAN.md 与 .cyber/' : '已存在 PLAN.md，只创建了 .cyber/'); refresh(true) }
+  catch (error) { toast('初始化失败：' + error.message, 'bad') }
+})
+$('judgeBtn').addEventListener('click', async () => {
+  toast('正在判定（会跑验收命令，稍等）…', 'warn')
+  try {
+    const r = await api('/api/judge')
+    toast(`判定：${r.verdict.status}（${(r.verdict.confidence ?? 0).toFixed(2)}）— ${r.verdict.reason?.slice(0, 80)}`)
+  } catch (error) { toast('判定失败：' + error.message, 'bad') }
+})
+$('refreshReport').addEventListener('click', refreshReport)
+
+async function startRun(dryRun) {
+  try {
+    await api('/api/config', { config: configFromForm() })   // 先落盘配置，再启动
+    const r = await api('/api/start', { dryRun })
+    if (!r.ok) return toast(r.error, 'warn')
+    toast(dryRun ? '已启动演练（只判定不注入）' : '已开始监工')
+    refresh(false)
+  } catch (error) { toast('启动失败：' + error.message, 'bad') }
+}
+$('start').addEventListener('click', () => startRun(false))
+$('watch').addEventListener('click', () => startRun(true))
+$('stop').addEventListener('click', async () => {
+  try { const r = await api('/api/stop', {}); toast(r.message ?? '已停止'); refresh(false) }
+  catch (error) { toast('停止失败：' + error.message, 'bad') }
+})
+$('pause').addEventListener('click', async () => { await api('/api/pause', {}); toast('已暂停（监工在下一轮停下）'); refresh(false) })
+$('resume').addEventListener('click', async () => { await api('/api/resume', {}); toast('已继续'); refresh(false) })
+
+// 启动时：优先用 URL 里的 cwd，其次上次用的
+const params = new URLSearchParams(location.search)
+loadProjects().then(() => {
+  const initial = params.get('cwd') || localStorage.getItem('cw.cwd')
+  if (initial) loadProject(initial)
+  else { $('cwd').focus(); toast('先填一个项目目录，或从「最近/建议」里挑', 'warn') }
+})
+</script>
+</body>
+</html>

@@ -33,6 +33,18 @@
 
 ## 60 秒上手
 
+**最省事的方式：开图形界面**（本地 Web UI，零依赖、只监听 127.0.0.1）：
+
+```bash
+node /path/to/cyber-overseer/bin/cw.mjs ui
+```
+
+浏览器会自动打开，页面上四件事一次做完：**① 选项目目录 → ② 写方案文档 → ③ 选 agent 与验收命令 →
+④ 点「开始监工」**，右边实时显示每一轮判定、抽出去的鞭子原文、验收命令结果和最终报告。
+想先看效果就点「演练」（只判定、不注入）。
+
+命令行方式（等价）：
+
 ```bash
 # 1）把仓库放到任意位置，零依赖、不需要 npm install
 git clone <this-repo> cyber-overseer && cd cyber-overseer
@@ -50,7 +62,7 @@ node /path/to/cyber-overseer/bin/cw.mjs watch
 node /path/to/cyber-overseer/bin/cw.mjs run
 ```
 
-或者装成全局命令：`npm i -g .` 之后直接 `cw init` / `cw run`。
+或者装成全局命令：`npm i -g .` 之后直接 `cw ui` / `cw run`。
 
 ### 先看离线演示（不联网、不需要 API Key、不需要真实 agent）
 
@@ -138,9 +150,33 @@ node bin/cw.mjs run --config examples/lazy-agent/cw.config.mjs
 
 配套的还有：`maxCostUsd`（判定花费上限）、`evidence.verify` 超时、`cw watch` 演练模式、退出码语义（见下）。
 
+## 图形界面（`cw ui`）
+
+日常用它，比记命令省事：
+
+| 页面区块 | 干什么 |
+|---|---|
+| ① 方案文档 | 直接编辑 `PLAN.md`，实时显示解析结果（目标/验收标准/勾选进度），顺手就能补"验收标准" |
+| ② 监工谁、怎么抽 | 适配器下拉（带本机可用性探测）、判定器、**验收命令**、轮次/卡死/静默期，以及各路适配器专属选项（DSH 抽鞭模式、Cursor 钩子、拟人通道窗口与空闲阈值） |
+| ③ 监工日志 | 监工子进程的实时输出 |
+| ④ 报告 | 收工后直接读 `CW-REPORT.md` |
+| 时间线 | 每一轮的判定、置信度、理由，以及**抽出去的那条鞭子原文** |
+| 底部按钮 | 开始监工 / 演练 / 停止 / 暂停 / 继续 / 预览判定 |
+
+几个设计上的选择：
+
+- **只监听 `127.0.0.1`** 并校验 Host 头。界面能启动监工、能改写方案文档，所以刻意不做局域网访问；
+  DSH 的 `/api` 无认证绑 0.0.0.0 的教训见 [`docs/SAFETY.md`](docs/SAFETY.md)。
+- **不会覆盖你手写的 `cw.config.mjs`**：检测到就只展示、只读；界面自己的配置写在 `.cyber/ui.config.json`，
+  通过 `--config` 传给监工。
+- **刷新或关掉页面不会杀掉正在跑的监工**：监工是界面服务的子进程，页面上有「停止」按钮。
+- 启动时会把方案/报告/日志/状态四个路径**显式钉到项目目录**（覆盖配置里的相对路径），
+  这样无论项目配置怎么写，界面和监工读写的位置都一致。
+
 ## 命令
 
 ```text
+cw ui                打开本地图形界面（推荐日常用；只监听 127.0.0.1）
 cw init              生成 cw.config.mjs + PLAN.md + .cyber/
 cw doctor            环境自检（Node 能力 / 各 agent / UI 通道 / 判定器 / 验收命令）
 cw adapters          适配器能力矩阵

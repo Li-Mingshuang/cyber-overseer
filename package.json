@@ -38,6 +38,7 @@
     "node": ">=22.15.0"
   },
   "scripts": {
+    "ui": "node bin/cw.mjs ui",
     "test": "node --test \"test/*.test.mjs\"",
     "test:watch": "node --test --watch \"test/*.test.mjs\"",
     "demo": "node bin/cw.mjs run --config examples/lazy-agent/cw.config.mjs",
