@@ -92,7 +92,7 @@ export async function main(argv = process.argv.slice(2)) {
   // 「一句话起步」：第一个词不是命令时，把整句当作目标 —— `cw "把登录页改成深色主题并跑通测试"`
   const COMMANDS = new Set([
     'help', 'version', 'init', 'doctor', 'adapters', 'sessions', 'windows', 'judge', 'whip',
-    'status', 'report', 'pause', 'resume', 'hooks', 'hook', 'mcp', 'ui', 'web', 'run', 'watch', 'do',
+    'status', 'report', 'pause', 'resume', 'hooks', 'hook', 'mcp', 'ui', 'web', 'run', 'watch', 'do', 'poke',
   ])
   if (!COMMANDS.has(command)) {
     return cmdQuick({ log, cwd, sentence: positional.join(' '), flags })
@@ -107,6 +107,7 @@ export async function main(argv = process.argv.slice(2)) {
     case 'sessions': return cmdSessions({ log, config, cwd, agentCwd, flags })
     case 'windows': return cmdWindows({ log, config, agentCwd })
     case 'judge': return cmdJudge({ log, config, cwd, planPath, agentCwd, flags })
+    case 'poke': return cmdPoke({ log, cwd, flags })
     case 'do': return cmdQuick({ log, cwd, sentence: positional.slice(1).join(' '), flags })
     case 'whip': return cmdWhip({ log, config, cwd, planPath, agentCwd, positional, flags })
     case 'status': return cmdStatus({ log, config, cwd })
@@ -177,7 +178,9 @@ function printHelp(log) {
 
 用法：cw <命令> [选项]
 
-  cw ui               打开本地图形界面（推荐日常用；只监听 127.0.0.1，零依赖）
+  cw poke             催工：agent 一停下（或在等你回话）就催它继续 —— 最小用法，不需要方案与配置
+  cw "<一句话目标>"     一句话起步：自动选 agent / 猜验收命令 / 生成方案 / 直接开跑
+  cw ui               打开本地图形界面（只监听 127.0.0.1）
   cw run              开始监工（判定→抽鞭→再判定，直到方案完成或触发护栏）
   cw watch            演练模式：只判定、只打印要抽的鞭子，不真的注入
   cw judge            只判定一次并打印结论
@@ -433,8 +436,9 @@ async function cmdSessions({ log, config, cwd, agentCwd, flags }) {
     log.raw(`      ${title}`)
     if (s.cwd) log.raw(`      ${oneLine(s.cwd, 90)}`)
     const extra = []
-    if (s.turnCount !== undefined && s.turnCount !== null) extra.push(`${s.turnCount} 回合`)
+    if (typeof s.turnCount === 'number') extra.push(`${s.turnCount} 回合`)
     if (s.raw?.eventCount) extra.push(`${s.raw.eventCount} 事件`)
+    if (typeof s.size === 'number' && s.size > 0) extra.push(`${Math.round(s.size / 1024)}KB`)
     if (extra.length) log.raw(`      ${extra.join('｜')}${live ? '' : live}`)
   }
   log.raw('')
@@ -630,6 +634,52 @@ async function cmdMcp({ log, config, cwd, flags }) {
   const { serveMcpMailbox } = await import('./adapters/mcp-mailbox.mjs')
   await serveMcpMailbox({ cwd, log })
   return 0
+}
+
+/**
+ * cw poke —— 催工模式（本项目最小的形态）。
+ *
+ * 不读方案文档、不看验收命令、不叫模型：**agent 一停下来（或在等你回话）就催它继续**。
+ * 这是"让 agent 持续工作"这件事最直接的实现。
+ */
+async function cmdPoke({ log, cwd, flags }) {
+  const { runPoke, DEFAULT_NUDGE } = await import('./poke.mjs')
+  if (flags.help === true || flags.h === true) {
+    log.raw(`
+cw poke —— 催工：agent 一停下就催它继续（不需要方案文档、不需要配置）
+
+  cw poke                     盯当前目录的 agent 会话，停下就催（最多 30 次）
+  cw poke --times 10          最多催 10 次
+  cw poke --agent codex       换 agent（默认优先 DSH）
+  cw poke --session <id>      盯指定会话
+  cw poke --text "继续做完"    自定义催促语
+  cw poke --dry-run           只观察与判定，不真的发
+  cw poke --every 10          催促后等待新回答的轮询间隔（秒）
+
+停止条件：它自己写 CW:DONE ／ 连着两轮回答没变化 ／ 催够次数 ／ Ctrl+C ／ .cyber/PAUSE
+`)
+    return 0
+  }
+  const controller = new AbortController()
+  const onSignal = () => controller.abort()
+  process.once('SIGINT', onSignal)
+  process.once('SIGTERM', onSignal)
+  try {
+    const result = await runPoke({
+      cwd,
+      log,
+      agentId: typeof flags.agent === 'string' ? flags.agent : (typeof flags.adapter === 'string' ? flags.adapter : undefined),
+      session: typeof flags.session === 'string' ? flags.session : undefined,
+      maxNudges: flags.times !== undefined ? Number(flags.times) : undefined,
+      everyMs: flags.every !== undefined ? Number(flags.every) * 1000 : undefined,
+      nudge: typeof flags.text === 'string' ? flags.text : DEFAULT_NUDGE,
+      signal: controller.signal,
+    })
+    return result.stopReason === 'interrupted' ? 130 : 0
+  } finally {
+    process.removeListener('SIGINT', onSignal)
+    process.removeListener('SIGTERM', onSignal)
+  }
 }
 
 /**

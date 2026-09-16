@@ -19,12 +19,13 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { zstdDecompressSync } from 'node:zlib'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { run, which, spawnDetached } from '../util/proc.mjs'
 import { clip, oneLine, stripAnsi, tail } from '../util/text.mjs'
 import { jsonRequest } from '../util/http.mjs'
-import { hasZstd } from '../util/zstd-frames.mjs'
+import { hasZstd, scanFrames } from '../util/zstd-frames.mjs'
 import { createCache, probeFail, probeOk, samePath, selectSession } from './base.mjs'
 import { decodeSessionBytes, summarizeSession, titleFromPlan } from './dsh-session.mjs'
 
@@ -94,7 +95,8 @@ export function createDshAdapter(ctx) {
         try { stat = statSync(file) } catch { continue }
         let summary = null
         try {
-          summary = readSummary(file)
+          // 列会话用轻量读（只解头帧 + 尾帧）；整解留给 readState
+          summary = readSummaryLite(file)
         } catch (error) {
           log?.debug?.(`跳过读不动的会话 ${file}：${error?.message ?? error}`)
         }
@@ -106,12 +108,70 @@ export function createDshAdapter(ctx) {
           size: stat.size,
           path: file,
           status: summary?.status ?? 'unknown',
-          turnCount: summary?.turn?.count ?? 0,
+          turnCount: summary?.turn?.current ?? summary?.turn?.count ?? null,
           raw: summary,
         })
       }
     }
     return out.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+  }
+
+  /**
+   * 轻量读一个会话：**只解头帧 + 末尾几帧**，不解压整个文件。
+   *
+   * 为什么必须这样：会话文件是几百 KB、上千个 zstd 帧，"列个表"如果把每个文件都整解一遍，
+   * 65 个会话要十几秒（实测），把交互式命令全拖死。列会话只需要：会话 id/cwd（头帧）、
+   * 标题与回合状态（尾帧）、更新时间（文件 mtime）。
+   * 需要"最后一次回答"时，才用 readSummary 整解（只对选中的那一个会话做）。
+   */
+  function readSummaryLite(file) {
+    const key = `lite:${file}:${statSync(file).size}:${statSync(file).mtimeMs}`
+    return cache.get(key, () => {
+      const buf = readFileSync(file)
+      const frames = scanFrames(buf)
+      const decode = (index) => {
+        const frame = frames[index]
+        if (!frame || frame.kind !== 'frame' || !frame.complete) return null
+        try { return zstdDecompressSync(buf.subarray(frame.start, frame.end)).toString('utf8') } catch { return null }
+      }
+      const parse = (text) => {
+        const out = []
+        if (!text) return out
+        for (const line of text.split('\n')) {
+          const trimmed = line.trim()
+          if (!trimmed) continue
+          try { out.push(JSON.parse(trimmed)) } catch { /* 半截行 */ }
+        }
+        return out
+      }
+      // 头帧：会话元信息；接着再读开头几帧（标题、开头几个回合边界都在文件前部）
+      const head = parse(decode(0))
+      const header = head.find(r => r?.type === 'session') ?? head[0] ?? null
+      const headRecords = [...head]
+      for (let i = 1; i < Math.min(8, frames.length); i++) headRecords.push(...parse(decode(i)))
+      // 尾帧（最近几帧）：最新标题与当前回合状态
+      const tailRecords = []
+      for (let i = Math.max(0, frames.length - 6); i < frames.length; i++) tailRecords.push(...parse(decode(i)))
+
+      const all = [...headRecords, ...tailRecords]
+      const lastTitle = [...all].reverse().find(r => r?.type === 'session/title' && r.data?.title)?.data?.title ?? null
+      let openTurn = false
+      let turnCount = 0
+      for (const record of all) {
+        if (record?.type === 'turn/start') { openTurn = true; turnCount = Math.max(turnCount, record.data?.turn ?? 0) }
+        else if (record?.type === 'turn/end') { openTurn = false; turnCount = Math.max(turnCount, record.data?.turn ?? 0) }
+      }
+      return {
+        sessionId: header?.id ?? null,
+        cwd: header?.cwd ?? null,
+        createdAt: header?.createdAt ?? null,
+        title: lastTitle,
+        status: openTurn ? 'working' : 'idle',
+        turn: { current: turnCount || null, open: openTurn },
+        frames: frames.length,
+        lite: true,
+      }
+    })
   }
 
   /** 读一个会话文件并折叠状态（带短 TTL 缓存 + 大小/mtime 变更检测）。 */
