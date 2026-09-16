@@ -46,7 +46,9 @@ export const ACP_PRESETS = {
   dsh: {
     command: 'node',
     args: ['<deepseek-harness>/packages/examples/acp-demo/lib/bin.js', '--config', 'examples/acp-agent/cordis.yml'],
-    note: 'DSH 的 ACP 服务端在 packages/examples/acp-demo；需要 DEEPSEEK_API_KEY，cwd 需指向 deepseek-harness 仓库',
+    note: 'DSH 的 ACP 服务端在 packages/examples/acp-demo；需要 DEEPSEEK_API_KEY，且进程必须在 deepseek-harness 仓库根启动（--config 是相对路径）',
+    // 关键：--config 是相对路径，所以启动目录必须是 harness 仓库根，而不是被监工的项目目录
+    launchCwdFromCheckout: true,
   },
   gemini: { command: 'gemini', args: ['--experimental-acp'], note: 'Gemini CLI 的实验性 ACP 入口（按你安装的版本为准）' },
 }
@@ -62,6 +64,18 @@ export function createAcpAdapter(ctx) {
   const preset = presetName ? ACP_PRESETS[presetName] : null
   const command = options.command?.[0] ?? preset?.command ?? null
   const args = options.command ? options.command.slice(1) : (preset?.args ?? [])
+  const checkout = options.dshCheckout ?? process.env.DSH_CHECKOUT ?? null
+  /**
+   * 两个 cwd 必须分开：
+   *   - `launchCwd`：**ACP 服务端进程**的启动目录（DSH 的 --config 是相对路径，必须在 harness 仓库根）；
+   *   - `acpCwd`：传给 `session/new` 的**工作区目录**（agent 真正干活的地方）。
+   * 早期版本把两者混为一谈，结果 DSH 的 preset 一启动就找不到配置文件。
+   */
+  const launchCwd = options.launchCwd
+    ?? (preset?.launchCwdFromCheckout && checkout ? checkout : null)
+    ?? options.acpCwd
+    ?? cwd
+  const workspaceCwd = options.acpCwd ?? cwd
 
   /** @type {JsonRpcStdioClient|null} */
   let client = null
@@ -82,7 +96,7 @@ export function createAcpAdapter(ctx) {
   }
 
   const resolveArgs = () => args.map(a => String(a)
-    .replace('<deepseek-harness>', options.dshCheckout ?? process.env.DSH_CHECKOUT ?? cwd))
+    .replace('<deepseek-harness>', checkout ?? cwd))
 
   async function ensureSession() {
     if (sessionId && client?.alive) return sessionId
@@ -90,7 +104,7 @@ export function createAcpAdapter(ctx) {
     initializing = (async () => {
       const resolvedArgs = resolveArgs()
       const conn = new JsonRpcStdioClient({
-        command, args: resolvedArgs, cwd: options.acpCwd ?? cwd,
+        command, args: resolvedArgs, cwd: launchCwd,
         env: {
           ...process.env,
           ...(options.permissionMode ? { DSH_PERMISSION_MODE: options.permissionMode } : {}),
@@ -129,7 +143,7 @@ export function createAcpAdapter(ctx) {
         clientCapabilities: options.clientCapabilities ?? {},
       }, { timeoutMs: options.startTimeoutMs ?? 60000 })
       const created = await conn.request('session/new', {
-        cwd: options.acpCwd ?? cwd,
+        cwd: workspaceCwd,
         mcpServers: options.mcpServers ?? [],
       }, { timeoutMs: options.startTimeoutMs ?? 60000 })
       sessionId = created?.sessionId ?? created?.session?.id ?? null
@@ -183,7 +197,16 @@ export function createAcpAdapter(ctx) {
         return probeFail(`入口文件不存在：${firstFile}`, ['确认 ACP 端的路径（dsh 的 ACP 端在 packages/examples/acp-demo/lib/bin.js）'])
       }
       if (!resolved && !isNode) return probeFail(`找不到可执行文件：${command}`, [`PATH 里没有 ${command}`])
+      if (preset?.launchCwdFromCheckout && !checkout) {
+        return probeFail('该预设需要 harness 仓库路径（--config 是相对路径）', [
+          '设 agent.options.dshCheckout 或环境变量 DSH_CHECKOUT 指向 deepseek-harness 仓库',
+        ])
+      }
+      if (options.acpCwd && !existsSync(options.acpCwd)) {
+        return probeFail(`acpCwd 不存在：${options.acpCwd}`, ['session/new 的 cwd 必须是一个真实目录'])
+      }
       if (preset?.note) hints.push(preset.note)
+      hints.push(`启动目录 ${launchCwd}｜工作区 ${workspaceCwd}`)
       hints.push('ACP 只能看到成文文本（没有工具调用/reasoning）；跨连接不能恢复会话，所以一次 cw run 用一个连接')
       if (config.guard?.autoApprove !== true) hints.push('agent 的权限请求会被自动拒绝（默认安全）；需要放行请开 guard.autoApprove')
       return probeOk(`ACP 端：${command} ${resolveArgs().join(' ')}（启动时才会建立会话）`, hints)

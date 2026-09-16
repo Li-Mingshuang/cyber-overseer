@@ -30,7 +30,9 @@
 - [x] 报告与通知：CW-REPORT.md + journal.jsonl + webhook/响铃
 - [x] 测试 55 个 + 离线端到端演示
 - [x] 双语文档 + 各家逆向报告
-- [ ] dsh：ACP / SDK JSON-RPC 通道实测接入（协议已摸清，见 docs/recon）
+- [x] dsh 的 ACP 通道：真实握手实测通过（`node scripts/verify-acp.mjs`，零 token）
+- [ ] dsh 的 ACP prompt 通路实测（需要花真实额度，留给主人决定）
+- [ ] dsh 的 SDK JSON-RPC 通道（协议已摸清，见 docs/recon/dsh-control-surfaces.md §4.6）
 - [ ] human-sim：macOS（osascript）与 Linux（xdotool）驱动
 - [ ] 多 agent 并行监工（一个监工进程管多个会话）
 - [ ] `cw status --watch`：终端里的实时面板

@@ -161,11 +161,37 @@ agent: {
   options: {
     preset: 'opencode',        // opencode | dsh | gemini，或自己给 command
     // command: ['node', '<deepseek-harness>/packages/examples/acp-demo/lib/bin.js', '--config', 'examples/acp-agent/cordis.yml'],
-    // dshCheckout: 'C:/path/to/deepseek-harness',   // 用于替换命令里的 <deepseek-harness> 占位符
+    dshCheckout: 'C:/path/to/deepseek-harness',     // 替换命令里的 <deepseek-harness>；dsh 预设必填
+    launchCwd: 'C:/path/to/deepseek-harness',       // ACP 服务端进程的启动目录（dsh 预设会自动用它）
     acpCwd: '/path/to/project',                     // session/new 的 cwd（agent 在这里干活）
     permissionMode: 'workspace-write',              // 传给 dsh 的 DSH_PERMISSION_MODE
   },
 }
+```
+
+> ⚠️ **两个 cwd 必须分开**，这是踩出来的：`launchCwd` 是 *ACP 服务端进程* 的启动目录，
+> `acpCwd` 是传给 `session/new` 的 *工作区*。DSH 的 `--config examples/acp-agent/cordis.yml`
+> 是**相对路径**，所以进程必须在 deepseek-harness 仓库根启动，否则一启动就找不到配置。
+> （`preset: 'dsh'` 会自动把 `launchCwd` 设成 `dshCheckout`。）
+
+### 零成本自检（不发 prompt、不花额度）
+
+```bash
+node scripts/verify-acp.mjs                          # 自动找 DSH
+node scripts/verify-acp.mjs --preset opencode
+node scripts/verify-acp.mjs --command "node <harness>/packages/examples/acp-demo/lib/bin.js --config examples/acp-agent/cordis.yml" --cwd <harness>
+```
+
+它只做 `initialize` → `session/new` → `session/cancel` 三步握手，**绝不发送 prompt**，
+所以零 token 消耗。跑通它就说明抽鞭之前的全部前置条件成立（入口、协议、工作区都对）。
+
+实测输出（真实 DSH ACP 服务端）：
+
+```
+✔ initialize：{"protocolVersion":1,"agentInfo":{"name":"deepseek-harness-acp","version":"0.0.1"},…}
+✔ session/new：sessionId=438d5356-db94-483e-ab01-547b45d04cb8
+✔ 已发送 session/cancel
+结论：ACP 通道可用（本次握手未发送任何 prompt，零 token 消耗）。
 ```
 
 ACP 是"客户端 ↔ agent"的开放协议（DSH、opencode、Zed 生态都实现了）。对监工来说它有一个很舒服的
