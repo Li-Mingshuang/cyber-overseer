@@ -3,583 +3,511 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>赛博监工 · Cyber Overseer</title>
+<title>赛博监工</title>
 <style>
-  :root {
-    --bg: #0f1115; --panel: #171a21; --panel2: #1e222b; --line: #2a2f3a;
-    --fg: #e6e9ef; --dim: #9aa3b2; --accent: #ff5a3c; --ok: #35c46b; --warn: #f0b429; --bad: #ef4b6b;
-    --mono: ui-monospace, SFMono-Regular, Consolas, "Cascadia Mono", monospace;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.6 system-ui, "Microsoft YaHei UI", sans-serif; }
-  header { display: flex; gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
-  header h1 { font-size: 16px; margin: 0; white-space: nowrap; }
-  header .whip { color: var(--accent); }
-  input, select, textarea, button { font: inherit; color: var(--fg); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
-  input, textarea { width: 100%; }
-  textarea { resize: vertical; font-family: var(--mono); font-size: 13px; line-height: 1.5; }
-  button { cursor: pointer; white-space: nowrap; }
-  button:hover { border-color: #3b424f; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-  button.ghost { background: transparent; }
-  button:disabled { opacity: .45; cursor: not-allowed; }
-  main { display: grid; grid-template-columns: minmax(360px, 1fr) minmax(420px, 1.15fr); gap: 14px; padding: 14px 16px 40px; align-items: start; }
-  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
-  section.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
-  section.card > h2 { font-size: 13px; text-transform: none; letter-spacing: .02em; color: var(--dim); margin: 0 0 10px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-  label.f { display: block; color: var(--dim); font-size: 12px; margin: 6px 0 2px; }
-  .pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); color: var(--dim); }
-  .pill.ok { color: var(--ok); border-color: #245c3c; }
-  .pill.bad { color: var(--bad); border-color: #5c2434; }
-  .pill.warn { color: var(--warn); border-color: #5c4a24; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); display: inline-block; }
-  .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); animation: pulse 1.4s infinite; }
-  @keyframes pulse { 50% { opacity: .35 } }
-  .progress { height: 8px; background: var(--panel2); border-radius: 999px; overflow: hidden; border: 1px solid var(--line); }
-  .progress > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), #ffa06b); }
-  .list { max-height: 320px; overflow: auto; }
-  .ev { border-left: 2px solid var(--line); padding: 6px 0 6px 10px; margin: 6px 0; }
-  .ev.continue { border-color: var(--accent); }
-  .ev.done { border-color: var(--ok); }
-  .ev.blocked, .ev.error { border-color: var(--bad); }
-  .ev.needs-human { border-color: var(--warn); }
-  .ev .meta { color: var(--dim); font-size: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
-  .ev pre { white-space: pre-wrap; margin: 6px 0 0; font-family: var(--mono); font-size: 12px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px; max-height: 220px; overflow: auto; }
-  pre.log { margin: 0; max-height: 240px; overflow: auto; font-family: var(--mono); font-size: 12px; background: #0b0d11; border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
-  pre.log .err { color: var(--bad); } pre.log .sys { color: var(--warn); } pre.log .out { color: var(--fg); }
-  .muted { color: var(--dim); font-size: 12px; }
-  .toolbar { position: sticky; bottom: 0; background: linear-gradient(180deg, transparent, var(--bg) 40%); padding: 10px 0 0; }
-  details > summary { cursor: pointer; color: var(--dim); }
-  .adapters { display: grid; gap: 6px; }
-  .adapter { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; font-size: 12px; }
-  .adapter .name { white-space: nowrap; }
-  .adapter .detail { color: var(--dim); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 62%; }
-  .toast { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 20; }
-  .toast div { background: var(--panel2); border: 1px solid var(--line); border-left: 3px solid var(--accent); padding: 8px 12px; border-radius: 8px; max-width: 380px; }
-  .warnbox { border: 1px solid #5c4a24; background: #241f12; color: #f5d08a; padding: 8px 10px; border-radius: 8px; font-size: 12px; }
+  :root { --fg:#111827; --dim:#6b7280; --line:#e5e7eb; --bg:#ffffff; --soft:#f9fafb; --accent:#dc2626; --ok:#059669; }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.65 system-ui,"Microsoft YaHei UI",sans-serif; }
+  .wrap { max-width:760px; margin:0 auto; padding:28px 20px 60px; }
+
+  /* ── 顶部：简笔画 + 标题 + 状态 ── */
+  header { display:flex; align-items:center; gap:14px; padding-bottom:18px; border-bottom:1px solid var(--line); margin-bottom:22px; }
+  header svg { flex:0 0 auto; color:var(--fg) }
+  h1 { font-size:20px; margin:0; letter-spacing:.01em }
+  .sub { color:var(--dim); font-size:13px; margin-top:2px }
+  .status { margin-left:auto; display:flex; align-items:center; gap:7px; font-size:13px; color:var(--dim); white-space:nowrap }
+  .dot { width:8px; height:8px; border-radius:50%; background:#d1d5db }
+  .dot.on { background:var(--ok); animation:pulse 1.4s infinite }
+  @keyframes pulse { 50% { opacity:.3 } }
+
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap }
+  input, select, textarea, button { font:inherit; color:var(--fg); background:#fff; border:1px solid var(--line); border-radius:10px; padding:9px 12px; }
+  input, textarea { width:100% }
+  input:focus, textarea:focus { outline:2px solid #fecaca; border-color:#fca5a5 }
+  textarea { font-family:ui-monospace,Consolas,monospace; font-size:13px; resize:vertical }
+  button { cursor:pointer; white-space:nowrap }
+  button:hover { border-color:#d1d5db; background:var(--soft) }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600 }
+  button.primary:hover { background:#b91c1c; border-color:#b91c1c }
+  button.big { width:100%; padding:14px; font-size:16px; border-radius:12px }
+  button:disabled { opacity:.45; cursor:not-allowed }
+
+  .card { border:1px solid var(--line); border-radius:14px; padding:16px; margin-bottom:16px }
+  .card h2 { font-size:14px; margin:0 0 10px; font-weight:600 }
+  .muted { color:var(--dim); font-size:13px }
+  code { background:var(--soft); border:1px solid var(--line); border-radius:5px; padding:1px 5px; font-size:12px }
+
+  pre.log { background:var(--soft); border:1px solid var(--line); border-radius:10px; padding:12px;
+            max-height:280px; overflow:auto; font-family:ui-monospace,Consolas,monospace; font-size:12.5px; margin:0 }
+  pre.log .err { color:#b91c1c } pre.log .sys { color:#b45309 }
+
+  .list { max-height:340px; overflow:auto }
+  .ev { border-left:2px solid var(--line); padding:6px 0 6px 12px; margin:10px 0 }
+  .ev.nudge { border-color:var(--accent) }
+  .ev.done { border-color:var(--ok) }
+  .ev .meta { color:var(--dim); font-size:12.5px }
+  .ev pre { background:var(--soft); border:1px solid var(--line); border-radius:8px; padding:10px;
+            white-space:pre-wrap; font-family:ui-monospace,Consolas,monospace; font-size:12.5px; margin:6px 0 0; max-height:200px; overflow:auto }
+  details { border:1px solid var(--line); border-radius:12px; padding:12px 16px; margin-bottom:14px }
+  details summary { cursor:pointer; color:var(--dim); font-size:13px }
+  .toast { position:fixed; right:18px; bottom:18px; display:grid; gap:8px; z-index:9 }
+  .toast div { background:#fff; border:1px solid var(--line); border-left:3px solid var(--accent);
+               box-shadow:0 6px 18px rgba(0,0,0,.07); padding:9px 13px; border-radius:10px; max-width:360px; font-size:13px }
 </style>
 </head>
 <body>
-<header>
-  <h1>赛博<span class="whip">监工</span></h1>
-  <div class="row" style="flex:1; min-width:280px">
-    <select id="recent" style="max-width:230px" title="最近使用 / 建议"></select>
-    <input id="cwd" placeholder="项目目录（绝对路径）" spellcheck="false">
-    <button id="load" class="ghost">打开</button>
-  </div>
-  <span class="pill" id="runState"><span class="dot" id="runDot"></span><span id="runText">未运行</span></span>
-  <button id="initBtn" class="ghost" title="在目录里生成 PLAN.md 与 .cyber/">初始化</button>
-</header>
+<div class="wrap">
 
-<main>
-  <div>
-    <section class="card" style="border-color:#5c2424; background:#1f1414">
-      <h2><span>🥊 催工 <span class="muted">（最常用：agent 一停下就催它继续）</span></span>
-        <span class="row">
-          <select id="pokeTimes" style="width:auto">
-            <option value="10">最多催 10 次</option>
-            <option value="30" selected>最多催 30 次</option>
-            <option value="100">最多催 100 次</option>
-          </select>
+  <header>
+    <!-- 简笔画：赛博监工（火柴人 + 鞭子 + 面罩/天线） -->
+    <svg width="66" height="72" viewBox="0 0 120 130" fill="none" stroke="currentColor"
+         stroke-width="4" stroke-linecap="round" stroke-linejoin="round" aria-label="赛博监工">
+      <!-- 头 + 天线 + 面罩 -->
+      <circle cx="58" cy="30" r="13"/>
+      <path d="M58 17V7"/><circle cx="58" cy="5" r="2.5" fill="currentColor" stroke="none"/>
+      <path d="M46 28h24"/>
+      <!-- 身体 -->
+      <path d="M58 43v30"/>
+      <!-- 左臂（垂下） -->
+      <path d="M58 52 34 68"/>
+      <!-- 右臂（举起，握鞭） -->
+      <path d="M58 50 86 30"/>
+      <!-- 鞭子：握把 + 抽出去的鞭身 + 鞭梢 -->
+      <path d="M86 30l7 3"/>
+      <path d="M93 33c9 8 2 18 10 24 6 5 12 1 15 6" stroke-width="3"/>
+      <path d="M118 63l6 3" stroke-width="2.5"/>
+      <!-- 腿 -->
+      <path d="M58 73 44 100"/><path d="M58 73l14 27"/>
+      <!-- 脚下地面 -->
+      <path d="M30 104h64" stroke-width="3" opacity=".35"/>
+    </svg>
+    <div>
+      <h1>赛博监工</h1>
+      <div class="sub">agent 一停，就催它继续</div>
+    </div>
+    <div class="status"><span class="dot" id="runDot"></span><span id="runText">未运行</span></div>
+  </header>
+
+  <div class="card">
+    <h2>① 选项目</h2>
+    <div class="row">
+      <select id="recent" style="max-width:210px"><option value="">最近 / 建议…</option></select>
+      <input id="cwd" placeholder="项目目录（绝对路径）" spellcheck="false" style="flex:1; min-width:220px">
+      <button id="load">打开</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>② 让它盯着</h2>
+    <button id="pokeStart" class="primary big">盯着它，停了就催</button>
+    <div class="row" style="margin-top:10px; justify-content:space-between">
+      <span class="muted" id="pokeInfo">在跑就不打扰；它停下、或在等你回话/等审批，就催它自己往下走。</span>
+      <span class="row">
+        <select id="pokeTimes" style="width:auto">
+          <option value="10">最多 10 次</option>
+          <option value="30" selected>最多 30 次</option>
+          <option value="100">最多 100 次</option>
+        </select>
+        <button id="stop" disabled>停止</button>
+      </span>
+    </div>
+  </div>
+
+  <details id="quickCard">
+    <summary>要是还想"验收全绿才算完"，用一句话起步</summary>
+    <div class="row" style="margin-top:10px">
+      <input id="quickText" placeholder="例如：把登录页改成深色主题并跑通测试" style="flex:1; min-width:240px">
+      <button id="quickStart">开始监工</button>
+      <button id="quickPlan">只生成方案</button>
+    </div>
+    <div class="muted" id="quickDecided" style="margin-top:8px">自动选 agent、自动猜验收命令、自动生成方案，然后把决定写在这里。</div>
+  </details>
+
+  <div class="card">
+    <h2>③ 它现在在干嘛 <span class="muted" id="agentState"></span></h2>
+    <div class="list" id="timeline"><span class="muted">还没有记录。</span></div>
+  </div>
+
+  <details id="sessionsCard">
+    <summary>看看有哪些会话（可指定盯哪一个）</summary>
+    <div style="margin-top:10px">
+      <div class="row" style="margin-bottom:8px">
+        <span class="muted" id="sessionsInfo">读取中…</span>
+        <span class="row" style="margin-left:auto">
+          <label class="muted"><input type="checkbox" id="sessionsMineOnly" style="width:auto"> 只看本项目的</label>
+          <button id="sessionsReload">刷新</button>
         </span>
-      </h2>
+      </div>
+      <div class="list" id="sessions"></div>
+    </div>
+  </details>
+
+  <details>
+    <summary>监工日志与报告</summary>
+    <div style="margin-top:12px">
+      <pre class="log" id="log">（未运行）</pre>
+      <div class="row" style="margin:10px 0 6px"><button id="refreshReport">刷新报告</button></div>
+      <pre class="log" id="report">（还没有报告）</pre>
+    </div>
+  </details>
+
+  <details>
+    <summary>高级：方案文档 / 适配器 / 验收命令 / 护栏</summary>
+    <div style="margin-top:12px">
+      <div class="row" style="justify-content:space-between">
+        <span class="muted" id="planFile"></span>
+        <span class="row"><span class="muted" id="planProgressText">—</span><button id="savePlan">保存方案</button></span>
+      </div>
+      <textarea id="planText" rows="10" placeholder="方案文档（可选）：写完点保存，监工每轮会重读它" style="margin-top:8px"></textarea>
+      <div class="muted" id="planParsed" style="margin-top:6px"></div>
+
+      <div class="row" style="margin-top:14px">
+        <div style="flex:1; min-width:180px">
+          <div class="muted">适配器</div>
+          <select id="adapter" style="width:100%"></select>
+        </div>
+        <div style="flex:1; min-width:180px">
+          <div class="muted">判定器</div>
+          <select id="judgeKind" style="width:100%">
+            <option value="chain">chain（规则优先，判不了才问模型）</option>
+            <option value="rule">rule（零成本、离线）</option>
+            <option value="llm">llm（每轮问模型）</option>
+            <option value="human">human（交给主人）</option>
+          </select>
+        </div>
+      </div>
+      <div class="muted" style="margin-top:10px">验收命令（每行一条）</div>
+      <textarea id="verify" rows="2" placeholder="npm test"></textarea>
+      <div class="row" style="margin-top:10px">
+        <div style="flex:1"><div class="muted">最多抽几鞭</div><input id="maxRounds" type="number" min="1" value="12"></div>
+        <div style="flex:1"><div class="muted">无进展几轮就停</div><input id="maxStall" type="number" min="1" value="3"></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div style="flex:1"><div class="muted">静默期起</div><input id="quietFrom" placeholder="23:00"></div>
+        <div style="flex:1"><div class="muted">静默期止</div><input id="quietTo" placeholder="08:00"></div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button id="saveConfig">保存配置</button><button id="judgeBtn">预览判定</button>
+        <button id="pause">暂停</button><button id="resume">继续</button>
+      </div>
+      <div class="muted" id="configNote" style="margin-top:8px"></div>
+    </div>
+  </details>
+
+  <details id="apiCard">
+    <summary>API 设置（判定器用；不配也能跑）</summary>
+    <div style="margin-top:12px">
       <div class="row">
-        <button id="pokeStart" class="primary" style="flex:1">盯着它，停了就催</button>
+        <div style="flex:2; min-width:220px">
+          <div class="muted">API Key（只写不回显，存在 .cyber/.env，不进 git）</div>
+          <input id="apiKey" type="password" placeholder="sk-…（留空表示不改）" autocomplete="off">
+        </div>
+        <div style="flex:1; min-width:150px">
+          <div class="muted">变量名</div>
+          <input id="apiKeyEnv" placeholder="DEEPSEEK_API_KEY">
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div style="flex:2; min-width:220px">
+          <div class="muted">Base URL（任何 OpenAI 兼容端点）</div>
+          <input id="apiBaseUrl" placeholder="https://api.deepseek.com/v1">
+        </div>
+        <div style="flex:1; min-width:150px">
+          <div class="muted">模型</div>
+          <input id="apiModel" placeholder="deepseek-chat">
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button id="apiSave" class="primary">保存</button>
+        <button id="apiTest">测试连接</button>
+        <span class="muted" id="apiState">读取中…</span>
       </div>
       <div class="muted" style="margin-top:8px">
-        不需要方案文档、不需要验收命令、不需要配置。它在跑就不打扰；它停下（或在等你回话/等审批）就催它自己往下走。
-        停止条件：它写 <code>CW:DONE</code> ／ 连着两轮没变化 ／ 催够次数 ／ 点「停止」。
+        只有判定器需要 API：<code>rule</code> 完全不用；<code>chain</code>（默认）没 key 时自动退化为 rule。
+        只想让它催 agent 继续，可以不配。
       </div>
-    </section>
+    </div>
+  </details>
 
-    <section class="card" style="border-color:#5c3a24; background:#1d1713">
-      <h2><span>🚀 一句话起步 <span class="muted">（要"验收全绿才算完"时用）</span></span></h2>
-      <div class="row">
-        <input id="quickText" placeholder="说一句话，例如：把登录页改成深色主题并跑通测试" style="flex:1; min-width:260px">
-        <button id="quickStart" class="primary">开始监工</button>
-        <button id="quickPlan" class="ghost">只生成方案</button>
-      </div>
-      <div class="muted" id="quickDecided" style="margin-top:8px">它会自动选 agent、猜验收命令、生成方案，然后把决定打印在这里。</div>
-    </section>
-
-    <details class="card" id="advancedCard">
-      <summary style="font-size:13px; color:var(--dim)">高级：方案文档 / 适配器 / 验收命令 / 护栏（平时不用管）</summary>
-      <div style="margin-top:10px">
-        <section class="card">
-      <h2>
-        <span>① 方案文档 <span class="muted" id="planFile"></span></span>
-        <span class="row">
-          <span class="muted" id="planProgressText">—</span>
-          <button id="savePlan" class="ghost">保存</button>
-        </span>
-      </h2>
-      <div class="progress" style="margin-bottom:8px"><i id="planBar" style="width:0%"></i></div>
-      <textarea id="planText" rows="16" placeholder="点「初始化」生成模板，或直接在这里写方案文档"></textarea>
-      <div id="planParsed" class="muted" style="margin-top:8px"></div>
-      <div class="row" style="margin-top:8px">
-        <button id="judgeBtn" class="ghost" title="只读地判一次，不注入任何内容">预览判定</button>
-        <span class="muted">判定基于方案勾选 + 验收命令 + 工作区改动</span>
-      </div>
-    </section>
-      </div>
-    </details>
-
-    <section class="card">
-      <h2>③ 监工日志 <span class="muted">（子进程输出）</span></h2>
-      <pre class="log" id="log">（未运行）</pre>
-    </section>
-
-    <section class="card">
-      <h2>④ 报告 <span class="muted">CW-REPORT.md</span> <button id="refreshReport" class="ghost">刷新</button></h2>
-      <pre class="log" id="report">（还没有报告：跑一次监工就会生成）</pre>
-    </section>
-  </div>
-
-  <div>
-    <section class="card">
-      <h2>② 监工谁、怎么抽 <span class="muted" id="configSource"></span></h2>
-      <div class="grid2">
-        <div>
-          <label class="f">适配器（agent）</label>
-          <select id="adapter"></select>
-        </div>
-        <div>
-          <label class="f">判定器</label>
-          <select id="judgeKind">
-            <option value="chain">chain（规则优先，判不了才问模型）</option>
-            <option value="rule">rule（零成本、离线可用）</option>
-            <option value="llm">llm（每轮都问模型）</option>
-            <option value="human">human（交给主人裁决）</option>
-          </select>
-        </div>
-      </div>
-      <div id="adapterDetail" class="muted" style="margin-top:6px"></div>
-
-      <label class="f">验收命令（每行一条；判定"干完没有"最硬的证据）</label>
-      <textarea id="verify" rows="3" placeholder="npm test&#10;node verify.mjs"></textarea>
-
-      <div class="grid3" style="margin-top:8px">
-        <div>
-          <label class="f">最多抽几鞭</label>
-          <input id="maxRounds" type="number" min="1" value="12">
-        </div>
-        <div>
-          <label class="f">无进展几轮就停</label>
-          <input id="maxStall" type="number" min="1" value="3">
-        </div>
-        <div>
-          <label class="f">抽鞭休息（秒）</label>
-          <input id="cooldown" type="number" min="0" value="5">
-        </div>
-      </div>
-
-      <label class="f">只在主人休息时动手（静默期，可留空）</label>
-      <div class="grid2">
-        <input id="quietFrom" placeholder="23:00">
-        <input id="quietTo" placeholder="08:00">
-      </div>
-
-      <details style="margin-top:10px">
-        <summary>适配器专属设置（DSH / Cursor / 拟人通道 …）</summary>
-        <div class="grid2" style="margin-top:8px">
-          <div>
-            <label class="f">DSH 抽鞭模式</label>
-            <select id="dshWhip">
-              <option value="headless">headless（每次干净劳工，推荐无人值守）</option>
-              <option value="http">http（插进正在跑的会话）</option>
-              <option value="human-sim">human-sim（在 GUI 里打字）</option>
-            </select>
-          </div>
-          <div>
-            <label class="f">Cursor 抽鞭模式</label>
-            <select id="cursorWhip">
-              <option value="hooks">hooks（官方钩子，最干净）</option>
-              <option value="desktop-bridge">desktop-bridge（需开 Beta 开关）</option>
-              <option value="human-sim">human-sim（抢焦点打字）</option>
-            </select>
-          </div>
-        </div>
-        <div class="grid2" style="margin-top:8px">
-          <div>
-            <label class="f">拟人通道：目标窗口（进程名或标题）</label>
-            <input id="windowTitle" placeholder="Cursor / Chrome / Codex">
-          </div>
-          <div>
-            <label class="f">拟人通道：键盘空闲阈值（秒）</label>
-            <input id="humanIdle" type="number" min="0" value="120">
-          </div>
-        </div>
-        <label class="f">拟人通道：读取用哪个适配器读磁盘（最准，留空=用剪贴板）</label>
-        <input id="readerAdapter" placeholder="cursor / dsh / codex / opencode">
-      </details>
-
-      <div class="row" style="margin-top:10px">
-        <button id="saveConfig" class="ghost">保存配置</button>
-        <span class="muted" id="configNote"></span>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>跑起来</h2>
-      <div class="row toolbar">
-        <button id="start" class="primary">开始监工</button>
-        <button id="watch">演练（只判定不注入）</button>
-        <button id="stop">停止</button>
-        <button id="pause">暂停</button>
-        <button id="resume">继续</button>
-      </div>
-      <div class="warnbox" style="margin-top:10px">
-        无人值守前请确认：<b>验收命令</b>填对了、<b>最多抽几鞭</b>与<b>静默期</b>符合预期；
-        agent 侧的审批策略（如 codex 的 approval_policy）由你决定，监工不会替你点"同意"。
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>这一轮轮都发生了什么 <span class="muted" id="roundInfo"></span></h2>
-      <div class="list" id="timeline"><span class="muted">还没有记录。</span></div>
-    </section>
-
-    <section class="card">
-      <h2>这台机器能监工谁</h2>
-      <div class="adapters" id="adapters"><span class="muted">探测中…</span></div>
-    </section>
-  </div>
-</main>
+  <details>
+    <summary>这台机器能监工谁</summary>
+    <div id="adapters" class="muted" style="margin-top:10px">探测中…</div>
+  </details>
+</div>
 <div class="toast" id="toast"></div>
 
 <script>
 const $ = (id) => document.getElementById(id)
 let CWD = localStorage.getItem('cw.cwd') || ''
-let running = false
-let lastLineAt = 0
-let pollTimer = null
-let adapters = []
+let running = false, lastLineAt = 0, pollTimer = null, adapters = []
 
 function toast(message, kind = 'ok') {
-  const box = document.createElement('div')
-  box.textContent = message
-  box.style.borderLeftColor = kind === 'bad' ? 'var(--bad)' : (kind === 'warn' ? 'var(--warn)' : 'var(--accent)')
-  $('toast').appendChild(box)
-  setTimeout(() => box.remove(), 4200)
+  const el = document.createElement('div')
+  el.textContent = message
+  if (kind === 'bad') el.style.borderLeftColor = '#dc2626'
+  if (kind === 'warn') el.style.borderLeftColor = '#d97706'
+  $('toast').appendChild(el); setTimeout(() => el.remove(), 4200)
 }
+const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 
 async function api(path, body) {
-  const url = path + (path.includes('?') ? '&' : '?') + 'cwd=' + encodeURIComponent(CWD)
-  const res = await fetch(url, body === undefined ? {} : {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cwd: CWD, ...body }),
-  })
-  const data = await res.json().catch(() => ({ ok: false, error: '响应不是 JSON' }))
+  const res = await fetch(path + (path.includes('?') ? '&' : '?') + 'cwd=' + encodeURIComponent(CWD),
+    body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cwd: CWD, ...body }) })
+  const text = await res.text()
+  let data = null; try { data = JSON.parse(text) } catch { data = { ok: false, error: 'HTTP ' + res.status } }
   if (!res.ok || data.ok === false) throw new Error(data.error || ('HTTP ' + res.status))
   return data
 }
 
-// ---------- 配置 ↔ 表单 ----------
+function schedule(ms) { clearTimeout(pollTimer); pollTimer = setTimeout(() => refresh(false), ms) }
+
+async function refresh(full = true) {
+  if (!CWD) return
+  try {
+    const s = await api('/api/state')
+    const sup = s.supervisor ?? {}
+    running = Boolean(sup.running)
+    $('runDot').className = 'dot' + (running ? ' on' : '')
+    $('runText').textContent = running
+      ? (sup.mode === 'poke' ? '催工中' : (sup.dryRun ? '演练中' : '监工中')) + ' #' + sup.pid
+      : (s.run ? s.run.status + (s.run.stopReason ? '（' + s.run.stopReason + '）' : '') : '未运行')
+    $('stop').disabled = !running
+    $('pokeStart').disabled = running
+    if (full) {
+      $('configNote').textContent = s.note ?? ''
+      $('planFile').textContent = s.planFile ? '方案：' + s.planFile : '（没有 PLAN.md，可选）'
+      $('planText').value = s.planText ?? ''
+      if (s.plan) $('planProgressText').textContent = `${s.plan.doneCount}/${s.plan.totalCount} 已勾选`
+      applyConfig(s.config)
+      $('saveConfig').disabled = s.editable === false
+      renderAdapters()
+      loadApiSettings()
+    }
+    renderTimeline(s.journal)
+    if (sup.lines?.length) renderLog(sup.lines)
+    schedule(running ? 1500 : 8000)
+  } catch (error) { toast('读取状态失败：' + error.message, 'bad'); schedule(8000) }
+}
+
+function renderTimeline(journal) {
+  const events = (journal ?? []).filter(e => ['poke-decision','verdict','whip','stop','error','plan-reload'].includes(e.kind))
+  const last = [...events].reverse().find(e => e.kind === 'poke-decision')
+  $('agentState').textContent = last
+    ? `｜agent 状态：${{ working:'正在干活', idle:'停下了（在等人）', 'awaiting-input':'在等你回话', 'awaiting-approval':'在等审批', error:'出错停下' }[last.status] ?? last.status}`
+    : ''
+  if (!events.length) { $('timeline').innerHTML = '<span class="muted">还没有记录。点上面的按钮就开始。</span>'; return }
+  $('timeline').innerHTML = events.slice(-30).reverse().map((e) => {
+    if (e.kind === 'poke-decision') {
+      const label = e.action === 'nudge' ? '催了一下' : (e.action === 'stop' ? '停下' : '等它')
+      const status = { working:'正在干活', idle:'停下了', 'awaiting-input':'在等你回话', 'awaiting-approval':'在等审批' }[e.status] ?? e.status ?? '?'
+      return `<div class="ev ${e.action === 'nudge' ? 'nudge' : ''}">
+        <div><b>${label}</b> <span class="muted">— ${esc(status)}｜已催 ${e.nudges ?? 0} 次</span></div>
+        <div class="meta">${esc(e.reason ?? '')}</div>
+        ${e.answerTail ? `<pre>${esc(e.answerTail)}</pre>` : ''}</div>`
+    }
+    if (e.kind === 'whip') return `<div class="ev"><div class="meta">已抽鞭（第 ${e.round ?? '?'} 轮，${e.chars ?? 0} 字）</div><pre>${esc(e.whip ?? '')}</pre></div>`
+    if (e.kind === 'verdict') return `<div class="ev ${e.status === 'done' ? 'done' : 'nudge'}">
+        <div><b>判定：${e.status}</b> <span class="muted">置信度 ${(e.confidence ?? 0).toFixed(2)}</span></div>
+        <div class="meta">${esc(e.reason ?? '')}</div>${e.nextPrompt ? `<pre>${esc(e.nextPrompt)}</pre>` : ''}</div>`
+    if (e.kind === 'stop') return `<div class="ev done"><div class="meta">结束：${esc(e.reason ?? '')}</div></div>`
+    if (e.kind === 'error') return `<div class="ev"><div class="meta" style="color:#b91c1c">错误：${esc(e.message ?? '')}</div></div>`
+    return `<div class="ev"><div class="meta">方案更新：勾选 ${e.done}/${e.total}</div></div>`
+  }).join('')
+}
+
+function renderLog(lines) {
+  lastLineAt = Math.max(lastLineAt, ...lines.map(l => l.at))
+  const box = $('log'), atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 20
+  for (const line of lines) {
+    const div = document.createElement('div')
+    div.className = line.stream === 'err' ? 'err' : (line.stream === 'sys' ? 'sys' : '')
+    div.textContent = line.text
+    box.appendChild(div)
+  }
+  while (box.childNodes.length > 500) box.removeChild(box.firstChild)
+  if (atBottom) box.scrollTop = box.scrollHeight
+}
+
 function configFromForm() {
   const verify = $('verify').value.split('\n').map(s => s.trim()).filter(Boolean)
   const quietFrom = $('quietFrom').value.trim(), quietTo = $('quietTo').value.trim()
-  const adapter = $('adapter').value
-  const options = {}
-  if (adapter === 'dsh') options.whip = $('dshWhip').value
-  if (adapter === 'cursor') options.whip = $('cursorWhip').value
-  if (adapter === 'human-sim') {
-    const w = $('windowTitle').value.trim()
-    options.windowMatch = w ? (depthGuess(w)) : undefined
-    options.humanIdleMs = Number($('humanIdle').value || 120) * 1000
-    const reader = $('readerAdapter').value.trim()
-    if (reader) options.readerAdapter = reader
-  }
   return {
-    agent: { adapter, options },
     judge: { kind: $('judgeKind').value },
     evidence: { git: true, verify },
     guard: {
       maxRounds: Number($('maxRounds').value || 12),
       maxStallRounds: Number($('maxStall').value || 3),
-      cooldownMs: Number($('cooldown').value || 5) * 1000,
       quietHours: quietFrom && quietTo ? { from: quietFrom, to: quietTo } : null,
-      requireHumanIdleMs: Number($('humanIdle').value || 120) * 1000,
     },
   }
 }
-function depthGuess(value) {
-  // 简单判断：像路径/带后缀的当标题，纯单词当进程名
-  return /[\\/.]/.test(value) ? { title: value } : { process: value }
-}
-function applyConfig(config) {
-  const c = config || {}
+function applyConfig(c) {
+  if (!c) return
   if (c.agent?.adapter) $('adapter').value = c.agent.adapter
   if (c.judge?.kind) $('judgeKind').value = c.judge.kind
   $('verify').value = (c.evidence?.verify ?? []).join('\n')
   if (c.guard?.maxRounds) $('maxRounds').value = c.guard.maxRounds
   if (c.guard?.maxStallRounds) $('maxStall').value = c.guard.maxStallRounds
-  if (c.guard?.cooldownMs !== undefined) $('cooldown').value = Math.round(c.guard.cooldownMs / 1000)
   $('quietFrom').value = c.guard?.quietHours?.from ?? ''
   $('quietTo').value = c.guard?.quietHours?.to ?? ''
-  const o = c.agent?.options ?? {}
-  if (o.whip) { $('dshWhip').value = o.whip; $('cursorWhip').value = o.whip }
-  const w = o.windowMatch ?? {}
-  $('windowTitle').value = w.process ?? w.title ?? ''
-  if (o.humanIdleMs !== undefined) $('humanIdle').value = Math.round(o.humanIdleMs / 1000)
-  $('readerAdapter').value = o.readerAdapter ?? ''
 }
 
-// ---------- 渲染 ----------
-function renderPlan(state) {
-  $('planText').value = state.planText ?? ''
-  $('planFile').textContent = state.planFile ? `（${state.planFile}）` : '（还没有 PLAN.md）'
-  const p = state.plan
-  if (!p) { $('planProgressText').textContent = '—'; $('planBar').style.width = '0%'; $('planParsed').textContent = '' ; return }
-  const total = p.totalCount ?? 0, done = p.doneCount ?? 0
-  $('planProgressText').textContent = total ? `${done}/${total} 已勾选` : '没有任务清单'
-  $('planBar').style.width = total ? Math.round(done / total * 100) + '%' : '0%'
-  const bits = []
-  if (p.title) bits.push(`标题：${p.title}`)
-  if (p.acceptance?.length) bits.push(`验收标准 ${p.acceptance.length} 条`)
-  else bits.push('⚠ 没写「验收标准」：判定会变弱')
-  if (!total) bits.push('⚠ 没有 `- [ ]` 任务清单：规则判定无从核对')
-  if (p.pluginHack) void p.pluginHack
-  $('planParsed').innerHTML = bits.map(b => `<div>${escapeHtml(b)}</div>`).join('')
-    + (p.emptyTodos?.length ? `<details style="margin-top:6px"><summary>还剩 ${p.emptyTodos.length} 项没做</summary><div class="muted">${p.emptyTodos.slice(0, 30).map(t => '□ ' + escapeHtml(t)).join('<br>')}</div></details>` : '')
-}
-
-function renderRun(state) {
-  const sup = state.supervisor ?? {}
-  running = Boolean(sup.running)
-  $('runDot').className = 'dot' + (running ? ' on' : '')
-  const run = state.run
-  $('runText').textContent = running
-    ? (sup.dryRun ? '演练中' : '监工中') + ` pid=${sup.pid}`
-    : (run ? `${run.status}${run.stopReason ? '（' + run.stopReason + '）' : ''}` : '未运行')
-  $('start').disabled = running
-  $('watch').disabled = running
-  $('stop').disabled = !running
-  $('roundInfo').textContent = run ? `轮次 ${run.rounds}｜花费 $${(run.costUsd ?? 0).toFixed(4)}${state.paused ? '｜已暂停' : ''}` : (state.paused ? '已暂停' : '')
-}
-
-function renderTimeline(journal) {
-  const events = (journal ?? []).filter(e =>
-    e.kind === 'verdict' || e.kind === 'whip' || e.kind === 'guard' || e.kind === 'stop' ||
-    e.kind === 'error' || e.kind === 'plan-reload' || e.kind === 'poke-decision')
-  if (!events.length) { $('timeline').innerHTML = '<span class="muted">还没有记录。</span>'; return }
-  const html = []
-  for (const e of events.slice(-40).reverse()) {
-    if (e.kind === 'poke-decision') {
-      // 催工模式：显示"它当时什么状态、监工做了什么"
-      const label = e.action === 'wait' ? '等它' : (e.action === 'nudge' ? '催了一下' : '停下')
-      html.push(`<div class="ev ${e.action === 'nudge' ? 'continue' : (e.action === 'stop' ? 'done' : '')}">
-        <div><b>${label}</b> <span class="muted">agent 状态 ${e.status ?? '?'}｜第 ${e.nudges ?? 0} 次催促</span></div>
-        <div class="meta">${escapeHtml(e.reason ?? '')}</div>
-        ${e.answerTail ? `<pre>${escapeHtml(e.answerTail)}</pre>` : ''}
-      </div>`)
-    } else if (e.kind === 'verdict') {
-      html.push(`<div class="ev ${e.status}">
-        <div><b>第 ${e.round} 轮判定：${e.status}</b> <span class="muted">置信度 ${(e.confidence ?? 0).toFixed(2)}｜${e.judge ?? ''}</span></div>
-        <div class="meta">${escapeHtml(e.reason ?? '')}</div>
-        ${e.nextPrompt ? `<pre>${escapeHtml(e.nextPrompt)}</pre>` : ''}
-      </div>`)
-    } else if (e.kind === 'whip') {
-      html.push(`<div class="ev"><div class="meta">已抽鞭（第 ${e.round ?? '?'} 轮，${e.chars ?? 0} 字）</div><pre>${escapeHtml(e.whip ?? '')}</pre></div>`)
-    } else if (e.kind === 'plan-reload') {
-      html.push(`<div class="ev"><div class="meta">方案文档更新：勾选 ${e.done}/${e.total}</div></div>`)
-    } else if (e.kind === 'guard') {
-      html.push(`<div class="ev needs-human"><div class="meta">护栏触发：${escapeHtml(JSON.stringify(e).slice(0, 200))}</div></div>`)
-    } else if (e.kind === 'error') {
-      html.push(`<div class="ev error"><div class="meta">错误：${escapeHtml(e.message ?? '')}</div></div>`)
-    } else if (e.kind === 'stop') {
-      html.push(`<div class="ev done"><div class="meta">结束：${escapeHtml(e.reason ?? '')}</div></div>`)
-    }
-  }
-  $('timeline').innerHTML = html.join('')
-}
-
-function renderLog(lines) {
-  if (!lines?.length) return
-  lastLineAt = Math.max(lastLineAt, ...lines.map(l => l.at))
-  const box = $('log')
-  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 20
-  for (const line of lines) {
-    const span = document.createElement('div')
-    span.className = line.stream === 'err' ? 'err' : (line.stream === 'sys' ? 'sys' : 'out')
-    span.textContent = line.text
-    box.appendChild(span)
-  }
-  while (box.childNodes.length > 600) box.removeChild(box.firstChild)
-  if (atBottom) box.scrollTop = box.scrollHeight
-}
-
-async function renderAdapters(cwd) {
+async function renderAdapters() {
   try {
-    const data = await fetch('/api/adapters?cwd=' + encodeURIComponent(cwd)).then(r => r.json())
+    const data = await fetch('/api/adapters?cwd=' + encodeURIComponent(CWD)).then(r => r.json())
     adapters = data.adapters ?? []
-    $('adapters').innerHTML = adapters.map(a => `<div class="adapter">
-      <span class="name">${a.ok ? '✔' : '·'} <b>${escapeHtml(a.id)}</b> ${escapeHtml(a.label ?? '')}</span>
-      <span class="detail" title="${escapeHtml(a.detail ?? '')}">${escapeHtml(a.detail ?? '')}</span>
-    </div>`).join('')
-    const select = $('adapter')
-    const current = select.value
-    select.innerHTML = adapters.map(a => `<option value="${a.id}"${a.ok ? '' : ' data-off="1"'}>${escapeHtml(a.id)}${a.ok ? '' : '（本机不可用）'} — ${escapeHtml(a.label ?? '')}</option>`).join('')
-    if (current) select.value = current
-  } catch (error) {
-    $('adapters').innerHTML = `<span class="muted">探测失败：${escapeHtml(error.message)}</span>`
-  }
-}
-
-function renderAdapterDetail() {
-  const hit = adapters.find(a => a.id === $('adapter').value)
-  $('adapterDetail').innerHTML = hit
-    ? `${escapeHtml(hit.channel ?? '')}${hit.note ? '｜' + escapeHtml(hit.note) : ''}`
-      + (hit.hints?.length ? `<div class="muted">${hit.hints.map(h => '↳ ' + escapeHtml(h)).join('<br>')}</div>` : '')
-    : ''
-}
-
-async function refresh(full = true) {
-  if (!CWD) return
-  try {
-    const state = await api('/api/state')
-    renderPlan(state)
-    renderRun(state)
-    renderTimeline(state.journal)
-    if (full) {
-      $('configSource').textContent = state.configSource?.kind === 'handwritten'
-        ? '（手写 cw.config.mjs：只展示不覆盖）'
-        : (state.configSource?.kind === 'ui' ? '（界面配置 .cyber/ui.config.json）' : '（默认配置）')
-      $('configNote').textContent = state.note ?? ''
-      applyConfig(state.config)
-      $('saveConfig').disabled = state.editable === false
-    }
-    const sup = state.supervisor ?? {}
-    if (sup.lines?.length) renderLog(sup.lines)
-    schedule( sup.running ? 1500 : 6000)
-  } catch (error) {
-    toast('读取状态失败：' + error.message, 'bad')
-    schedule(6000)
-  }
-}
-
-function schedule(ms) {
-  clearTimeout(pollTimer)
-  pollTimer = setTimeout(() => refresh(false), ms)
-}
-
-function escapeHtml(text) {
-  return String(text ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
-}
-
-// ---------- 交互 ----------
-async function loadProject(cwd) {
-  CWD = cwd.trim()
-  if (!CWD) return
-  localStorage.setItem('cw.cwd', CWD)
-  $('cwd').value = CWD
-  lastLineAt = 0
-  $('log').innerHTML = ''
-  $('report').textContent = '（加载中…）'
-  await Promise.all([refresh(true), renderAdapters(CWD), refreshReport()])
-}
-
-async function refreshReport() {
-  try {
-    const data = await api('/api/report')
-    $('report').textContent = data.exists ? data.text : '（还没有报告：跑一次监工就会生成）'
+    $('adapters').innerHTML = adapters.map(a =>
+      `<div>${a.ok ? '✔' : '·'} <b>${esc(a.id)}</b> — ${esc(a.detail ?? '')}</div>`).join('')
+    const cur = $('adapter').value
+    $('adapter').innerHTML = adapters.map(a => `<option value="${a.id}">${esc(a.id)}${a.ok ? '' : '（不可用）'}</option>`).join('')
+    if (cur) $('adapter').value = cur
   } catch { /* 忽略 */ }
 }
 
+async function loadProject(cwd) {
+  CWD = String(cwd || '').trim()
+  if (!CWD) return
+  localStorage.setItem('cw.cwd', CWD); $('cwd').value = CWD
+  lastLineAt = 0; $('log').innerHTML = ''
+  await Promise.all([refresh(true), refreshReport()])
+}
+async function refreshReport() {
+  try { const r = await api('/api/report'); $('report').textContent = r.exists ? r.text : '（还没有报告）' } catch { /* 忽略 */ }
+}
 async function loadProjects() {
   try {
     const data = await fetch('/api/projects').then(r => r.json())
-    const options = []
-    for (const p of data.projects ?? []) options.push(`<option value="${escapeHtml(p)}">最近：${escapeHtml(p.split(/[\\/]/).pop())}</option>`)
-    for (const s of data.suggested ?? []) options.push(`<option value="${escapeHtml(s.cwd)}">${s.hasPlan ? '★ ' : ''}${escapeHtml(s.name)}</option>`)
-    $('recent').innerHTML = '<option value="">最近/建议…</option>' + options.join('')
+    const opts = []
+    for (const p of data.projects ?? []) opts.push(`<option value="${esc(p)}">最近：${esc(p.split(/[\\/]/).pop())}</option>`)
+    for (const s of data.suggested ?? []) opts.push(`<option value="${esc(s.cwd)}">${s.hasPlan ? '★ ' : ''}${esc(s.name)}</option>`)
+    $('recent').innerHTML = '<option value="">最近 / 建议…</option>' + opts.join('')
   } catch { /* 忽略 */ }
 }
 
-$('recent').addEventListener('change', (e) => { if (e.target.value) loadProject(e.target.value) })
-$('load').addEventListener('click', () => loadProject($('cwd').value))
-$('cwd').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadProject($('cwd').value) })
-$('adapter').addEventListener('change', renderAdapterDetail)
-
-$('savePlan').addEventListener('click', async () => {
-  try { const r = await api('/api/plan', { text: $('planText').value }); toast('方案已保存：' + r.planFile); refresh(true) }
-  catch (error) { toast('保存失败：' + error.message, 'bad') }
-})
-$('saveConfig').addEventListener('click', async () => {
-  try { await api('/api/config', { config: configFromForm() }); toast('配置已保存'); refresh(true) }
-  catch (error) { toast('保存失败：' + error.message, 'bad') }
-})
-$('initBtn').addEventListener('click', async () => {
-  if (!CWD) return toast('先填一个项目目录', 'warn')
-  try { const r = await api('/api/init'); toast(r.createdPlan ? '已生成 PLAN.md 与 .cyber/' : '已存在 PLAN.md，只创建了 .cyber/'); refresh(true) }
-  catch (error) { toast('初始化失败：' + error.message, 'bad') }
-})
-$('judgeBtn').addEventListener('click', async () => {
-  toast('正在判定（会跑验收命令，稍等）…', 'warn')
+// ── 交互 ──
+$('recent').onchange = (e) => { if (e.target.value) loadProject(e.target.value) }
+$('load').onclick = () => loadProject($('cwd').value)
+$('cwd').onkeydown = (e) => { if (e.key === 'Enter') loadProject($('cwd').value) }
+$('refreshReport').onclick = refreshReport
+$('stop').onclick = async () => { try { const r = await api('/api/stop', {}); toast(r.message ?? '已停止'); refresh(false) } catch (e) { toast(e.message, 'bad') } }
+$('pause').onclick = async () => { await api('/api/pause', {}); toast('已暂停'); refresh(false) }
+$('resume').onclick = async () => { await api('/api/resume', {}); toast('已继续'); refresh(false) }
+$('savePlan').onclick = async () => { try { const r = await api('/api/plan', { text: $('planText').value }); toast('方案已保存：' + r.planFile); refresh(true) } catch (e) { toast(e.message, 'bad') } }
+$('saveConfig').onclick = async () => { try { await api('/api/config', { config: configFromForm() }); toast('配置已保存'); refresh(true) } catch (e) { toast(e.message, 'bad') } }
+$('judgeBtn').onclick = async () => {
+  toast('正在判定（会跑验收命令）…', 'warn')
+  try { const r = await api('/api/judge'); toast(`判定：${r.verdict.status} — ${(r.verdict.reason ?? '').slice(0, 70)}`) } catch (e) { toast(e.message, 'bad') }
+}
+async function pokeStart(session) {
+  if (!CWD) return toast('先选一个项目目录', 'warn')
   try {
-    const r = await api('/api/judge')
-    toast(`判定：${r.verdict.status}（${(r.verdict.confidence ?? 0).toFixed(2)}）— ${r.verdict.reason?.slice(0, 80)}`)
-  } catch (error) { toast('判定失败：' + error.message, 'bad') }
-})
-$('refreshReport').addEventListener('click', refreshReport)
+    const r = await api('/api/poke', { times: Number($('pokeTimes').value || 30), ...(session ? { session } : {}) })
+    if (!r.ok) return toast(r.error ?? '启动失败', 'warn')
+    toast(session ? '开始盯着指定会话了' : '开始盯着了：它一停下就催它继续')
+    refresh(false)
+  } catch (e) { toast('启动失败：' + e.message, 'bad') }
+}
+$('pokeStart').onclick = () => pokeStart()
 
-// ---------- 一句话起步 ----------
-async function quickRun({ planOnly = false, dryRun = false } = {}) {
+// ── 会话列表（看得到全部会话，并可指定盯哪一个） ──
+const SESSION_STATUS = {
+  working: '● 正在跑', idle: '○ 空闲（在等人）', 'awaiting-approval': '▲ 等审批',
+  'awaiting-input': '▲ 等你回话', error: '✖ 出错停下', unknown: '· 未知',
+}
+const normPath = (p) => String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+function relTime(ms) {
+  if (!ms) return '?'
+  const m = Math.round((Date.now() - ms) / 60000)
+  return m < 1 ? '刚刚' : m < 60 ? `${m} 分钟前` : `${Math.round(m / 60)} 小时前`
+}
+async function loadSessions() {
+  $('sessionsInfo').textContent = '读取中…'
+  try {
+    const adapter = $('adapter').value || 'dsh'
+    const r = await fetch(`/api/sessions?cwd=${encodeURIComponent(CWD)}&adapter=${encodeURIComponent(adapter)}`).then(x => x.json())
+    const all = r.sessions ?? []
+    if (r.error) { $('sessionsInfo').textContent = `读取失败：${r.error}`; return }
+    const mine = all.filter(s => normPath(s.cwd) === normPath(CWD))
+    const list = $('sessionsMineOnly').checked ? mine : all
+    $('sessionsInfo').textContent = `${adapter}：${list.length} 个`
+      + (list.length < all.length ? `（本项目 ${mine.length} 个，共 ${all.length} 个）` : '')
+    $('sessions').innerHTML = list.length ? list.map(s => {
+      const isMine = normPath(s.cwd) === normPath(CWD)
+      return `<div class="ev ${s.status === 'working' ? 'nudge' : ''}">
+        <div><b>${esc(SESSION_STATUS[s.status] ?? (s.status ?? '?'))}</b>
+          <span class="muted">${relTime(s.updatedAt)}${isMine ? '｜本项目' : ''}</span></div>
+        <div class="meta">${esc(s.title ?? '(无标题)')}</div>
+        <div class="meta">${esc(String(s.id).slice(0, 40))}${s.cwd ? '｜' + esc(s.cwd) : ''}</div>
+        <div class="row" style="margin-top:6px"><button class="poke-one" data-session="${esc(s.id)}">盯这一个</button></div>
+      </div>`
+    }).join('') : '<span class="muted">没有会话（换上面的适配器，或先让 agent 跑一次）</span>'
+    for (const btn of document.querySelectorAll('.poke-one')) btn.onclick = () => pokeStart(btn.dataset.session)
+  } catch (error) { $('sessionsInfo').textContent = '读取失败：' + error.message }
+}
+$('sessionsReload').onclick = loadSessions
+$('sessionsMineOnly').onchange = loadSessions
+$('sessionsCard').ontoggle = () => { if ($('sessionsCard').open) loadSessions() }
+async function quickRun({ planOnly = false } = {}) {
   const sentence = $('quickText').value.trim()
-  if (!sentence) return toast('先说一句话，例如：把登录页改成深色主题并跑通测试', 'warn')
-  if (!CWD) return toast('先在顶部填一个项目目录', 'warn')
+  if (!sentence) return toast('先说一句话', 'warn')
+  if (!CWD) return toast('先选一个项目目录', 'warn')
   $('quickDecided').textContent = planOnly ? '正在生成方案…' : '正在决定怎么监工…'
   try {
-    const r = await api('/api/quick', { sentence, planOnly, dryRun })
-    if (!r.ok) { $('quickDecided').textContent = '失败：' + (r.error ?? ''); return toast(r.error ?? '启动失败', 'bad') }
-    $('quickDecided').innerHTML = (r.decided ?? []).map(l => escapeHtml(l)).join('<br>')
-    toast(planOnly ? '方案已生成（监工每轮会重读它）' : (dryRun ? '已开始演练（只判定不注入）' : '已开始监工'))
-    await refresh(true)
-  } catch (error) {
-    $('quickDecided').textContent = '失败：' + error.message
-    toast('失败：' + error.message, 'bad')
+    const r = await api('/api/quick', { sentence, planOnly })
+    if (!r.ok) { $('quickDecided').textContent = '失败：' + (r.error ?? ''); return toast(r.error ?? '失败', 'bad') }
+    $('quickDecided').innerHTML = (r.decided ?? []).map(esc).join('<br>')
+    toast(planOnly ? '方案已生成' : '已开始监工'); refresh(false)
+  } catch (e) { $('quickDecided').textContent = '失败：' + e.message; toast(e.message, 'bad') }
+}
+$('quickStart').onclick = () => quickRun({})
+$('quickPlan').onclick = () => quickRun({ planOnly: true })
+$('quickText').onkeydown = (e) => { if (e.key === 'Enter') quickRun({}) }
+
+// ── API 设置（key 只在服务端落盘，界面只显示"配没配"） ──
+async function loadApiSettings() {
+  try {
+    const s = await api('/api/settings')
+    $('apiKeyEnv').value = s.apiKeyEnv ?? 'DEEPSEEK_API_KEY'
+    $('apiBaseUrl').value = s.baseUrl ?? ''
+    $('apiModel').value = s.model ?? ''
+    $('apiState').textContent = s.keySet ? `已配置 ✓（来源：${s.keySource ?? '未知'}）` : '还没有配 key（不影响催工与规则判定）'
+  } catch (error) { $('apiState').textContent = '读取失败：' + error.message }
+}
+function apiBody() {
+  const apiKeyEnv = $('apiKeyEnv').value.trim() || 'DEEPSEEK_API_KEY'
+  const baseUrl = $('apiBaseUrl').value.trim()
+  const model = $('apiModel').value.trim()
+  return {
+    apiKeyEnv,
+    apiKey: $('apiKey').value.trim() || undefined,
+    judge: { llm: { apiKeyEnv, ...(baseUrl ? { baseUrl } : {}), ...(model ? { model } : {}) } },
   }
 }
-$('quickStart').addEventListener('click', () => quickRun({}))
-$('quickPlan').addEventListener('click', () => quickRun({ planOnly: true }))
-$('quickText').addEventListener('keydown', (e) => { if (e.key === 'Enter') quickRun({}) })
-
-// ---------- 催工（最常用那个按钮） ----------
-$('pokeStart').addEventListener('click', async () => {
-  if (!CWD) return toast('先在顶部填一个项目目录', 'warn')
+$('apiSave').onclick = async () => {
   try {
-    const r = await api('/api/poke', { times: Number($('pokeTimes').value || 30) })
-    if (!r.ok) return toast(r.error ?? '启动失败', 'warn')
-    toast('开始催工：它一停下就催它继续')
-    refresh(false)
-  } catch (error) { toast('启动失败：' + error.message, 'bad') }
-})
-
-async function startRun(dryRun) {
-  try {
-    await api('/api/config', { config: configFromForm() })   // 先落盘配置，再启动
-    const r = await api('/api/start', { dryRun })
-    if (!r.ok) return toast(r.error, 'warn')
-    toast(dryRun ? '已启动演练（只判定不注入）' : '已开始监工')
-    refresh(false)
-  } catch (error) { toast('启动失败：' + error.message, 'bad') }
+    const r = await api('/api/settings', apiBody())
+    if (!r.ok) return toast(r.error ?? '保存失败', 'warn')
+    $('apiKey').value = ''
+    toast(r.keySet ? '已保存' : '已保存（还没填 key）')
+    loadApiSettings()
+  } catch (error) { toast('保存失败：' + error.message, 'bad') }
 }
-$('start').addEventListener('click', () => startRun(false))
-$('watch').addEventListener('click', () => startRun(true))
-$('stop').addEventListener('click', async () => {
-  try { const r = await api('/api/stop', {}); toast(r.message ?? '已停止'); refresh(false) }
-  catch (error) { toast('停止失败：' + error.message, 'bad') }
-})
-$('pause').addEventListener('click', async () => { await api('/api/pause', {}); toast('已暂停（监工在下一轮停下）'); refresh(false) })
-$('resume').addEventListener('click', async () => { await api('/api/resume', {}); toast('已继续'); refresh(false) })
+$('apiTest').onclick = async () => {
+  $('apiState').textContent = '正在测试…'
+  try {
+    const r = await api('/api/test-api', {
+      apiKeyEnv: $('apiKeyEnv').value.trim(), baseUrl: $('apiBaseUrl').value.trim(), model: $('apiModel').value.trim(),
+    })
+    if (!r.ok) { $('apiState').textContent = '测试失败：' + r.error; return toast('测试失败：' + r.error, 'bad') }
+    $('apiState').textContent = `连通 ✓ ${r.model}（${r.ms}ms）`
+    toast(`API 通：${r.model}，${r.ms}ms`)
+  } catch (error) { $('apiState').textContent = '测试失败：' + error.message; toast(error.message, 'bad') }
+}
 
-// 启动时：优先用 URL 里的 cwd，其次上次用的
-const params = new URLSearchParams(location.search)
 loadProjects().then(() => {
-  const initial = params.get('cwd') || localStorage.getItem('cw.cwd')
+  const initial = new URLSearchParams(location.search).get('cwd') || localStorage.getItem('cw.cwd')
   if (initial) loadProject(initial)
-  else { $('cwd').focus(); toast('先填一个项目目录，或从「最近/建议」里挑', 'warn') }
+  else { $('cwd').focus(); toast('先选一个项目目录，或从「最近 / 建议」里挑', 'warn') }
 })
 </script>
 </body>
