@@ -108,7 +108,7 @@ try {
         },
       },
       guard: { requireHumanIdleMs: 0, restoreFocus: true, ...guard },
-      notify: { beep: false },
+      notify: { beep: false, toast: false },
     })
     config.__cwd = process.cwd()
     return config

@@ -27,7 +27,7 @@ function scaffold(options = {}, guard = {}) {
     evidence: { git: false, verify: [] },
     guard: { maxRounds: 8, maxWallClockMs: 30000, maxStallRounds: 9, quietHours: null, cooldownMs: 0, ...guard },
     journal: { dir: join(dir, '.cyber'), reportFile: 'CW-REPORT.md' },
-    notify: { beep: false },
+    notify: { beep: false, toast: false },
     runtime: { logLevel: 'error', stateFile: join(dir, '.cyber', 'state.json') },
   })
   config.__cwd = dir

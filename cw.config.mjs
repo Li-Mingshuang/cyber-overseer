@@ -67,5 +67,5 @@ export default {
     storeAnswers: false,       // 不把整段回答写进日志（可能含敏感片段）
   },
 
-  notify: { beep: false, webhook: null },
+  notify: { beep: false, toast: false, webhook: null },
 }

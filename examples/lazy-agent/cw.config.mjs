@@ -56,7 +56,7 @@ export default {
     storeAnswers: true,
   },
 
-  notify: { beep: false, webhook: null },
+  notify: { beep: false, toast: false, webhook: null },
 
   runtime: {
     logLevel: 'info',
