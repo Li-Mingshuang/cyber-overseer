@@ -102,6 +102,7 @@ export async function detectAgent(opts) {
     //    宁可不接、起新会话，也不能把监工开到别人的项目上去。
     let session = null
     let nearby = []
+    let sessionFromParent = false
     try {
       const all = await adapter.listSessions()
       const norm = (p) => String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
@@ -111,7 +112,10 @@ export async function detectAgent(opts) {
         const target = norm(cwd)
         return other && other !== target && (target.startsWith(other + '/') || other.startsWith(target + '/'))
       })
-      session = mine[0] ?? null
+      // 本项目自己有会话就用它；否则退一步用"上层目录里最新的那个"（很可能就是你刚才在用的），
+      // 但要**说明白**用的是哪一个，别让用户以为监工盯的是本项目。
+      session = mine[0] ?? nearby[0] ?? null
+      if (!mine.length && session) sessionFromParent = true
     } catch { /* 忽略 */ }
 
     if (id === 'dsh') {
@@ -125,9 +129,9 @@ export async function detectAgent(opts) {
           why: `接着本项目已有的 DSH 会话（${oneLine(session.title ?? session.id, 30)}，${session.status ?? ''}），用 HTTP 注入到同一段对话`,
         }
       }
-      const nearbyHint = nearby.length
-        ? `（另有 ${nearby.length} 个上层目录的会话不属于本项目，想接着某个请用 --session <id>）`
-        : ''
+      const nearbyHint = sessionFromParent
+        ? `（本项目没有自己的会话，接着的是上层目录里最新的那个：${oneLine(session.title ?? session.id, 30)}；要指定请用 --session <id>）`
+        : (nearby.length ? `（另有 ${nearby.length} 个上层目录的会话，想接着某个请用 --session <id>）` : '')
       return {
         adapter: id,
         options: { whip: 'headless', permissionMode: 'workspace-write' },
