@@ -26,3 +26,7 @@ examples/*/CW-REPORT.md
 .idea/
 .DS_Store
 Thumbs.db
+
+# OCR venv（体积大，且是机器相关的）
+.tools/
+

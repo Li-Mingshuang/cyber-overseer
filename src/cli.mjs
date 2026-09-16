@@ -336,6 +336,19 @@ async function cmdDoctor({ log, config, cwd, planPath, agentCwd }) {
   }
 
   log.raw('')
+  log.banner('OCR 引擎（拟人通道的辅助读取）')
+  try {
+    const { listOcrProviders } = await import('./ocr/index.mjs')
+    for (const provider of await listOcrProviders({ cwd, config, log })) {
+      log.raw(`  ${provider.available ? '✔' : '·'} ${provider.id.padEnd(9)} ${provider.label}`)
+      log.raw(`      ${provider.detail}｜${provider.cost}`)
+    }
+    log.raw('  提示：`npm run ocr:install` 一键装 RapidOCR（中文准得多），`npm run bench:ocr` 量准确率')
+  } catch (error) {
+    log.raw(`  · OCR 探测失败：${error?.message ?? error}`)
+  }
+
+  log.raw('')
   const key = process.env[config.judge?.llm?.apiKeyEnv ?? 'DEEPSEEK_API_KEY']
   log.raw(`  ${key ? '✔' : '·'} 判定器：${config.judge?.kind}${config.judge?.kind !== 'rule' ? `（${config.judge?.llm?.apiKeyEnv}=${key ? '已设置' : '未设置，将退化为 rule'}）` : ''}`)
   log.raw(`  ${config.evidence?.verify?.length ? '✔' : '·'} 验收命令：${config.evidence?.verify?.length ? config.evidence.verify.join(' | ') : '未配置（建议加，判定会准很多）'}`)
