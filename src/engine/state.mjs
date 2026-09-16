@@ -24,6 +24,8 @@ export const STATE_VERSION = 1
  * @property {string} answerHash
  * @property {string} [answerText] 回答原文（仅在 journal.storeAnswers 打开时保存）
  * @property {string} fingerprint 证据指纹（用于判"有没有进展"）
+ * @property {Array<{command:string, ok:boolean, code:number|null, cached?:boolean, durationMs?:number}>} [verify]
+ *   这一轮的验收命令结果（用于报告里画"从红到绿"的历史）
  * @property {number} costUsd
  * @property {number} waitMs 等待 agent 干完这一轮花了多久
  */
@@ -62,6 +64,11 @@ export function emptyState(partial = {}) {
     stopReason: null,
     lastAnswerHash: '',
     lastFingerprint: '',
+    /**
+     * 方案文档的"合同"基线（第一轮取一次）：验收标准 + 禁止事项 + 任务清单文本。
+     * 之后每轮对比它，用来发现"agent 偷偷把验收标准改简单"。
+     */
+    planContract: null,
     rounds: [],
     ...partial,
   }

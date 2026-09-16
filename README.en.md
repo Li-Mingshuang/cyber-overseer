@@ -36,12 +36,16 @@ Three hard signals: plan checkboxes (re-read every round), real exit codes of yo
 commands, and workspace changes (`git diff --stat`, fingerprints). Default order:
 failing verification → continue; unchecked todos → continue; all checked *and* verification green → done;
 anything genuinely undecidable → `needs-human` (never guess "done").
+Two extra guards: the report plots each verification command **round by round** ("red → green"), and the
+plan's "contract" (acceptance criteria + forbidden list + task texts) is fingerprinted on the first round —
+any removal or rewrite counts as *weakening* and the rule judge refuses to call it done
+(`evidence.planGuard`; opt out with `allowPlanWeakening`).
 
 **2. Every agent gets its own whip channel — and they all close the loop.**
 
 | Agent | Read | Whip |
 |---|---|---|
-| **DSH** | `$DSH_HOME/sessions/**/session.jsonl.zstd` (multi-frame zstd) | `dsh --profile headless "…"`, or `POST /api/session.prompt` into a live session, or human-sim, or a custom command |
+| **DSH** | `$DSH_HOME/sessions/**/session.jsonl.zstd` (multi-frame zstd) | `dsh --profile headless "…"`, or `POST /api/session.prompt` into a live session, or the **SDK stdio JSON-RPC** channel (`adapter: 'dsh-jsonrpc'`, one `cw dsh-profile --install`), or human-sim, or a custom command |
 | **Codex CLI** | `state_5.sqlite/threads` + `sessions/**/rollout-*.jsonl` | `codex exec resume <id> -C <dir> -s workspace-write -c approval_policy=never "…"` |
 | **opencode** | `opencode.db` (`message`/`part` projections) | `opencode run -s <sessionID> --dir <dir> --format json "…"` |
 | **Cursor** | `state.vscdb` (`cursorDiskKV`) | official `stop` hook returning `{"followup_message":"…"}` — Cursor drives the loop itself |
@@ -49,6 +53,11 @@ anything genuinely undecidable → `needs-human` (never guess "done").
 | **Any GUI agent** | human-sim: clipboard/UIA read of the dialog | human-sim: focus → paste → verify → Enter (three safety interlocks) |
 | **Any CLI agent** | command stdout / log file | `command: ['my-agent', '{text}']`, one fresh process per whip |
 | **Any MCP agent** | `.cyber/agent-reports.jsonl` | built-in MCP server: the agent calls `overseer_check` each turn |
+
+**Parallel supervision**: list several agents under `agents: [...]` and one process watches them all —
+independent verdicts and whips per entry, one shared budget (rounds / wall clock / cost) so N agents do not
+mean an N-times bill, per-agent reports plus a merged `CW-REPORT.md`. Watch it live with `cw status --watch`,
+and get a native Windows toast when everything stops.
 
 **3. The human-sim channel is fenced by three interlocks.**
 (1) it only acts when system-wide keyboard/mouse idle exceeds a threshold — "whip only while the master
@@ -58,6 +67,19 @@ window and refuses to type if it did not win; (3) before pressing Enter it re-re
 can never be sent. Verified live on Windows against a Chromium page (same engine as Cursor/Codex desktop):
 focus+readback, typing, clipboard paste, CJK/emoji, idle fuse — all green.
 UIA `TextPattern` is not supported by Chromium, so the reader uses the clipboard instead.
+
+All three platforms have a driver behind the same interface (`src/ui/`): Windows (built-in PowerShell 5.1 +
+UIA + SendInput, incl. screenshot/OCR), macOS (`osascript` / System Events — needs Accessibility permission,
+Ctrl chords are translated to Command), Linux (`xdotool` + `xclip`/`xsel`/`wl-clipboard` — Wayland needs
+XWayland, and without `xprintidle` the channel refuses to act). `cw doctor` / `cw windows` tell you what is
+missing on your box. The macOS/Linux drivers are unit-tested against a fake runner but **not yet verified on
+real machines** (this project's dev box is Windows).
+
+Reading back is the fragile part, so it now tries a list of transcript-area click candidates
+(`readerClickPoints`) before copying, offers an optional `blurComposer: 'esc'`, and — importantly —
+**never destroys a draft in your composer**: the focus probe used to clean up with `Ctrl+A` + `Delete`,
+which wiped whatever the master was typing; it now does a read-only pre-check and undoes with `Ctrl+Z`,
+aborting the whip whenever the composer already holds someone's text.
 
 ## Guardrails (defaults are deliberately conservative)
 
@@ -72,7 +94,8 @@ Outcome handling: terminal summary + bell, optional webhook, a human-readable `C
 ## Commands
 
 `init` · `doctor` · `adapters` · `sessions` · `windows` · `run` · `watch` · `judge` · `whip` ·
-`status` · `report` · `pause`/`resume` · `hooks install cursor` · `hook cursor-stop` · `mcp --serve`
+`status` (`--watch` = live panel) · `report` · `pause`/`resume` · `toast` · `dsh-profile` ·
+`hooks install cursor` · `hook cursor-stop` · `mcp --serve`
 
 Exit codes: `0` done, `10` max rounds, `11` max wall clock, `12` max cost, `13` stalled, `14` blocked,
 `15` needs human, `16` paused, `17` agent gone, `1` error, `130` interrupted.
@@ -116,8 +139,8 @@ cannot decide or has low confidence).
 ## Requirements
 
 Node ≥ 22.15 (recommended 24) for `node:sqlite` and `node:zlib` zstd. Zero runtime dependencies.
-The human-sim channel is Windows-only today (UIA + SendInput via the built-in Windows PowerShell 5.1);
-the interface is in place for `osascript` (macOS) and `xdotool` (Linux) implementations — PRs welcome.
+The human-sim channel has drivers for all three platforms (Windows / macOS / Linux) behind one interface;
+macOS and Linux are unit-tested but not yet exercised on real machines (the dev box is Windows).
 
 ## Documentation
 

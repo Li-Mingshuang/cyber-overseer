@@ -64,6 +64,21 @@ export function ruleJudge(input, opts = {}) {
     return verdict('blocked', `agent 显式宣告受阻：${oneLine(markers.blockedReason ?? '未说明')}`, null, 0.85)
   }
 
+  // 1.5) 方案文档的"合同"被改弱了（验收标准/任务/禁止事项被移除或改写）。
+  //      这是最需要防的作弊路径：把验收标准改简单，然后"通过"。
+  //      规则判定在这种情况下**拒绝收工**，把决定交回给人（除非配置明确接受）。
+  const allowWeakening = opts.allowPlanWeakening === true || input.config?.evidence?.allowPlanWeakening === true
+  if (evidence?.planChange?.weakened && !allowWeakening) {
+    return verdict(
+      'needs-human',
+      `方案文档的"合同"被改弱了：${evidence.planChange.description || '有内容被移除'}。`
+      + '规则判定拒绝在移除验收标准/任务/禁止事项之后收工；请人工确认这是有意的。',
+      null,
+      0.9,
+      { planWeakened: true, planChange: evidence.planChange },
+    )
+  }
+
   // 2) 卡死检测（放在"还有待办"之前）：连续几轮回答与证据都没变，
   //    说明再抽同样一句话也没用——应该换成"换条路"的鞭子，而不是复述待办清单。
   const stall = detectStall(answer, evidence, history)

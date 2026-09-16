@@ -249,3 +249,81 @@ export function planSummary(plan, maxChars = 6000) {
   const text = parts.join('\n\n')
   return text.length <= maxChars ? text : text.slice(0, maxChars) + '\n…（方案文档已截断）'
 }
+
+/**
+ * 方案文档里的"合同"部分：**验收标准 + 禁止事项 + 任务清单文本**。
+ *
+ * 为什么单独拎出来：方案文档是 agent 自己也会改的文件（勾选进度就在里面），
+ * 而"把验收标准改简单、把不想做的任务删掉"是它**能够**做的作弊。
+ * 把这三样在**第一轮**取一份基线，之后每轮对比，就能发现"合同被改弱了"。
+ *
+ * 归一化只压空白：勾选状态、时间戳这类噪声不会进指纹；而删一条、改一条都会。
+ *
+ * @param {ReturnType<typeof parsePlan>} plan
+ */
+export function planContract(plan) {
+  const clean = (text) => String(text ?? '').replace(/\s+/g, ' ').trim()
+  return {
+    acceptance: (plan?.acceptance ?? []).map(clean).filter(Boolean),
+    forbidden: (plan?.forbidden ?? []).map(clean).filter(Boolean),
+    todos: (plan?.todos ?? []).map(t => clean(t.text)).filter(Boolean),
+  }
+}
+
+/** 合同指纹（进日志/状态，用来一眼看出"合同变过没有"）。 */
+export function contractHash(contract) {
+  return createHash('sha256').update(JSON.stringify(contract ?? {})).digest('hex').slice(0, 16)
+}
+
+/**
+ * 对比合同基线，找出被改弱的地方。
+ *
+ * 判定规矩（刻意保守）：
+ *  - **移除**验收标准 / 任务 / 禁止事项 = `weakened`（改弱了）；
+ *  - **新增**不算改弱（主人可能自己加要求），但会记成 `changed`；
+ *  - **改写**一条 = 移除 + 新增（看起来就是改弱），所以也会 `weakened`——这是刻意的：
+ *    监工分不清"换个说法"和"偷偷放宽"，遇到就该喊人来看一眼。
+ *
+ * @param {{acceptance:string[], forbidden:string[], todos:string[]}|null} baseline
+ * @param {{acceptance:string[], forbidden:string[], todos:string[]}} current
+ */
+export function diffContracts(baseline, current) {
+  const empty = {
+    changed: false, weakened: false,
+    removedAcceptance: [], addedAcceptance: [],
+    removedTodos: [], addedTodos: [],
+    removedForbidden: [], addedForbidden: [],
+  }
+  if (!baseline) return empty
+  const now = current ?? { acceptance: [], forbidden: [], todos: [] }
+  const missing = (before = [], after = []) => before.filter(item => !after.includes(item))
+  const added = (before = [], after = []) => after.filter(item => !before.includes(item))
+  const removedAcceptance = missing(baseline.acceptance, now.acceptance)
+  const removedTodos = missing(baseline.todos, now.todos)
+  const removedForbidden = missing(baseline.forbidden, now.forbidden)
+  const addedAcceptance = added(baseline.acceptance, now.acceptance)
+  const addedTodos = added(baseline.todos, now.todos)
+  const addedForbidden = added(baseline.forbidden, now.forbidden)
+  return {
+    changed: Boolean(
+      removedAcceptance.length || addedAcceptance.length
+      || removedTodos.length || addedTodos.length
+      || removedForbidden.length || addedForbidden.length,
+    ),
+    weakened: Boolean(removedAcceptance.length || removedTodos.length || removedForbidden.length),
+    removedAcceptance, addedAcceptance, removedTodos, addedTodos, removedForbidden, addedForbidden,
+  }
+}
+
+/** 一句话描述合同变化（日志/报告/判定理由共用）。 */
+export function describeContractChange(change) {
+  if (!change?.changed) return ''
+  const parts = []
+  if (change.removedAcceptance.length) parts.push(`移除验收标准 ${change.removedAcceptance.length} 条`)
+  if (change.removedTodos.length) parts.push(`移除任务 ${change.removedTodos.length} 项`)
+  if (change.removedForbidden.length) parts.push(`移除禁止事项 ${change.removedForbidden.length} 条`)
+  if (change.addedAcceptance.length) parts.push(`新增验收标准 ${change.addedAcceptance.length} 条`)
+  if (change.addedTodos.length) parts.push(`新增任务 ${change.addedTodos.length} 项`)
+  if (change.addedForbidden.length) parts.push(`新增禁止事项 ${change.addedForbidden.length} 条`)
+  return parts.join('，')
+}

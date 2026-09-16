@@ -14,6 +14,7 @@
 
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
+import { contractHash, diffContracts, planContract } from '../plan.mjs'
 import { clip, hash, tail } from '../util/text.mjs'
 import { run } from '../util/proc.mjs'
 
@@ -37,6 +38,10 @@ import { run } from '../util/proc.mjs'
  * @property {number} stallRounds
  * @property {string} inputFingerprint
  * @property {number} collectedAt
+ * @property {{changed:boolean, weakened:boolean, removedAcceptance:string[], addedAcceptance:string[],
+ *   removedTodos:string[], addedTodos:string[], removedForbidden:string[], addedForbidden:string[],
+ *   contractHash:string, description:string}} [planChange]
+ *   方案文档"合同"（验收标准/禁止事项/任务清单）相对基线的变化——用来抓"偷偷放宽验收"
  */
 
 /**
@@ -44,12 +49,13 @@ import { run } from '../util/proc.mjs'
  * @param {{
  *   config:any, cwd:string, plan:{sha256:string, doneCount:number, totalCount:number},
  *   answer:string, previous?:{evidence?:Evidence|null, answerHash?:string}, history?:any[],
- *   runFn?:typeof run, log?:any, signal?:AbortSignal
+ *   runFn?:typeof run, log?:any, signal?:AbortSignal,
+ *   baseline?:{acceptance:string[], forbidden:string[], todos:string[]}|null
  * }} args
  * @returns {Promise<Evidence>}
  */
 export async function collectEvidence(args) {
-  const { config, cwd, plan, answer, previous, history = [], runFn = run, log, signal } = args
+  const { config, cwd, plan, answer, previous, history = [], runFn = run, log, signal, baseline = null } = args
   const git = await collectGit(config, cwd, runFn, signal)
   const inputFingerprint = computeInputFingerprint({ git, plan })
   const verify = await collectVerify({ config, cwd, runFn, log, signal, inputFingerprint, previous })
@@ -60,6 +66,17 @@ export async function collectEvidence(args) {
   const sameAsPreviousAnswer = Boolean(previousAnswerHash) && previousAnswerHash === answerHash
   const sameFingerprint = Boolean(previousFingerprint) && previousFingerprint === fingerprint
 
+  // 方案文档的"合同"对比：第一轮取基线，之后每轮看它有没有被改弱（默认开启，见 evidence.planGuard）
+  const contract = planContract(plan)
+  const planChange = config.evidence?.planGuard === false
+    ? undefined
+    : {
+        ...diffContracts(baseline, contract),
+        contractHash: contractHash(contract),
+        baselineHash: baseline ? contractHash(baseline) : null,
+      }
+  if (planChange) planChange.description = describeChange(planChange)
+
   return {
     verify,
     git,
@@ -69,7 +86,21 @@ export async function collectEvidence(args) {
     sameAsPreviousAnswer,
     stallRounds: sameAsPreviousAnswer && sameFingerprint ? computeStall(history, answerHash, fingerprint) : 0,
     collectedAt: Date.now(),
+    planChange,
   }
+}
+
+/** 一句话描述合同变化（复用 plan.mjs 的措辞，这里只做兜底）。 */
+function describeChange(change) {
+  if (!change?.changed) return ''
+  const parts = []
+  if (change.removedAcceptance.length) parts.push(`移除验收标准 ${change.removedAcceptance.length} 条`)
+  if (change.removedTodos.length) parts.push(`移除任务 ${change.removedTodos.length} 项`)
+  if (change.removedForbidden.length) parts.push(`移除禁止事项 ${change.removedForbidden.length} 条`)
+  if (change.addedAcceptance.length) parts.push(`新增验收标准 ${change.addedAcceptance.length} 条`)
+  if (change.addedTodos.length) parts.push(`新增任务 ${change.addedTodos.length} 项`)
+  if (change.addedForbidden.length) parts.push(`新增禁止事项 ${change.addedForbidden.length} 条`)
+  return parts.join('，')
 }
 
 /**

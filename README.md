@@ -161,24 +161,53 @@ node bin/cw.mjs run --config examples/lazy-agent/cw.config.mjs
 | 方案的复选框勾选进度 | 每轮重读方案文档（agent 勾了立刻可见） |
 | 验收命令的真实结果 | `npm test` / `pytest` / 任何你配的命令，退出码 + 输出 |
 | 工作区改动 | `git diff --stat`、未跟踪文件、证据指纹 |
+| 方案文档的"合同"有没有被改弱 | 第一轮取基线（验收标准/任务/禁止事项文本），之后任何**移除或改写**都拒绝收工 |
 
 所以默认的判定顺序是：**验收命令失败 → 继续；有待办没勾 → 继续；全勾完 + 验收全绿 → 收工**。
 判不了就老实说"需要人类"（`needs-human`），绝不瞎猜完成。
+
+两条针对"证据会不会被骗"的加固：
+
+- **验收命令的历史趋势**：报告里按命令画出"第 N 轮 ✔/✖"，结论直接写"从红到绿 / 一直通过 / 仍未通过"
+  ——只看最后一次是会被骗的；
+- **方案文档防篡改**：agent 能改方案文档（勾选进度就在里面），所以"把验收标准改简单、把不想做的任务删掉"
+  会被抓住（`evidence.planGuard`，默认开）→ 规则判定**拒绝收工**并喊人。明确接受这种改法的项目
+  可以关掉，或用 `allowPlanWeakening: true` 显式放行。
 
 ### 2. 抽鞭的通道因 agent 而异，但都能闭环
 
 | Agent | 读（会话从哪来） | 抽（指令怎么塞进去） | 形态 |
 |---|---|---|---|
-| **DSH**（本项目的家） | `$DSH_HOME/sessions/**/session.jsonl.zstd` | ① `dsh --profile headless "…"`（推荐，一次性新会话接力）② `POST /api/session.prompt`（插进活会话，queue/steer）③ 拟人 ④ 自定义命令 | 真闭环 |
+| **DSH**（本项目的家） | `$DSH_HOME/sessions/**/session.jsonl.zstd` | ① `dsh --profile headless "…"`（推荐，一次性新会话接力）② `POST /api/session.prompt`（插进活会话，queue/steer）③ **SDK stdio JSON-RPC**（常驻进程：`session/prompt` 注入 + `session.event` 事件流观测，一次建 profile 后长期可用）④ 拟人 ⑤ 自定义命令 | 真闭环 |
 | **Codex CLI** | `state_5.sqlite/threads` + `sessions/**/rollout-*.jsonl` | `codex exec resume <id> -C <dir> -s workspace-write -c approval_policy=never --json -o <file> "…"` | 真闭环 |
 | **opencode** | `opencode.db`（`message`/`part` 投影表） | `opencode run -s <sessionID> --dir <dir> --format json "…"` | 真闭环 |
 | **Cursor** | `state.vscdb`（`cursorDiskKV`） | 官方 **`stop` 钩子返回 `{"followup_message":"…"}`**（无门控、由 Cursor 自己驱动） | 真闭环 |
 | **任何 ACP agent** | 协议通道（DSH / opencode / Zed 生态都实现了 ACP） | 标准协议 `session/prompt`：**同一连接可反复投喂**，像真人一样一直跟同一个 agent 对话 | 真闭环 |
-| **任何 GUI agent** | 拟人通道：剪贴板/UIA 读对话框 | 拟人通道：抢焦点 → 粘贴 → 回车（带三重保险） | 通用兜底 |
+| **任何 GUI agent** | 拟人通道：剪贴板/UIA 读对话框 | 拟人通道：抢焦点 → 粘贴 → 回车（带三重保险；Windows / macOS / Linux 都有驱动） | 通用兜底 |
 | **任何 CLI agent** | 命令 stdout / 日志文件 | `command: ['my-agent', '{text}']` 每次起一个进程 | 通用兜底 |
 | **任何 MCP agent** | `.cyber/agent-reports.jsonl` | 挂内置 MCP 服务：agent 每回合调 `overseer_check` 取指令 | 通用兜底 |
 
 细节与踩坑记录见 [`docs/ADAPTERS.md`](docs/ADAPTERS.md)、各家逆向报告在 [`docs/recon/`](docs/recon/)。
+
+### 2.1 多 agent 并行监工
+
+真实项目里常同时开着 Cursor 写前端、codex 改后端。配一个 `agents[]` 数组就并行盯：
+
+```js
+export default {
+  agents: [
+    { name: 'front', adapter: 'cursor', cwd: 'apps/web', plan: 'PLAN-web.md' },
+    { name: 'back',  adapter: 'codex',  cwd: 'apps/api', plan: 'PLAN-api.md' },
+  ],
+  evidence: { verify: ['npm test'] },   // 每个条目都可以覆盖任意配置
+}
+```
+
+- 每个条目**独立**判定/抽鞭（自己的 adapter / 目录 / 方案 / 判定器）；
+- 轮次 / 时长 / 花费是**共享一套预算**（不会变成 N 倍账单），账目进合并报告；
+- 分项报告 `CW-REPORT-<name>.md`、独立事件流 `.cyber/agents/<name>/`，总报告把结果与预算去向合并成一张表；
+- 任何一个 agent 挂掉都不影响其它（错误隔离，退出码取最严重的）；
+- 实时看：`cw status --watch`。
 
 ### 3. 拟人通道：真的像人一样读、像人一样打字
 
@@ -200,6 +229,24 @@ node bin/cw.mjs run --config examples/lazy-agent/cw.config.mjs
 | 中文/emoji（`KEYEVENTF_UNICODE`） | ✅ |
 | 系统空闲检测当保险丝 | ✅ |
 | UIA 读 Chromium 页面正文 | ❌ 不支持 → 改用剪贴板读取（`Ctrl+A`/`Ctrl+C`） |
+
+**三个平台都有驱动**（同一套接口，`src/ui/`）：
+
+| 平台 | 依赖 | 备注 |
+|---|---|---|
+| Windows | 自带的 Windows PowerShell 5.1（UIA + SendInput） | 含截图/OCR |
+| macOS | `osascript`（System Events） | 第一次要在「系统设置 → 隐私与安全性 → 辅助功能」里给终端/Node 授权；Ctrl 组合自动翻成 Command |
+| Linux | `xdotool` + `xclip`/`xsel`/`wl-clipboard` | Wayland 需 XWayland；没有 `xprintidle` 时读不到空闲时间，`requireHumanIdleMs > 0` 会一直等（宁可不动） |
+
+`cw doctor` / `cw windows` 会直接告诉你本平台能不能用、还差什么。
+
+**读回与草稿保护**（这条通道最脆弱的地方）：
+
+- 焦点被输入框抢走时（`Ctrl+A` 只选到空输入框），按一串候选点挨个"点对话区 → 再复制"，
+  捞到像对话记录的就停；可以用 `readerClickPoints` 自己指定候选点；
+- 可选 `blurComposer: 'esc'` 在读之前按一次 Esc 把焦点赶出输入框（默认关：有些 agent 的 Esc 是"停止生成"）；
+- **绝不破坏你的草稿**：确认焦点用的探针从"粘贴 + Ctrl+A + Delete"改成"只读预检 + **Ctrl+Z 撤销**"，
+  读回"草稿 + 探针"时直接放弃这一鞭（除非你显式 `clearComposer: true`）。
 
 ## 护栏：无人值守的底线
 
@@ -256,9 +303,11 @@ cw run               开始监工（默认命令）
 cw watch             演练：只判定不抽鞭
 cw judge             只判定一次并打印结论
 cw whip "<文本>"     手动抽一鞭（调试注入通道）
-cw status            当前状态
+cw status            当前状态（`cw status --watch` 是终端实时面板，多 agent 一起看）
 cw report            打印最近一次报告
 cw pause / resume    喊停 / 继续
+cw toast             自检 Windows 原生通知（收工提醒）
+cw dsh-profile       查看/安装 DSH 的 SDK JSON-RPC profile（`--install`，零 token）
 cw hooks install cursor     给 Cursor 装官方 stop 钩子（最干净的闭环）
 cw hook cursor-stop         钩子回调入口（Cursor 调用它，读 stdin JSON）
 cw mcp --serve              启动 MCP 信箱服务端
@@ -305,10 +354,12 @@ cw mcp --serve              启动 MCP 信箱服务端
 export default {
   plan: 'PLAN.md',
   agent: {
-    adapter: 'dsh',               // dsh | codex | opencode | cursor | human-sim | generic-cli | mcp-mailbox
+    adapter: 'dsh',               // dsh | dsh-jsonrpc | codex | opencode | cursor | acp | human-sim | generic-cli | mcp-mailbox
     session: 'latest',
     options: { /* 各适配器自定义，见 docs/ADAPTERS.md */ },
   },
+  // 多 agent 并行（可选）：每个条目独立判定/抽鞭，预算共享、报告合并
+  // agents: [{ name: 'front', adapter: 'cursor', cwd: 'apps/web', plan: 'PLAN-web.md' }],
   judge: {
     kind: 'chain',                // chain（规则优先，判不了才问模型）| rule | llm | human
     llm: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apiKeyEnv: 'DEEPSEEK_API_KEY' },
@@ -316,6 +367,7 @@ export default {
   evidence: {
     git: true,
     verify: ['npm test'],         // ← 强烈建议配：这是最硬的证据
+    planGuard: true,              // 方案文档"合同"防篡改（验收标准/任务被移除或改写 → 拒绝收工）
   },
   guard: {
     maxRounds: 24,
@@ -324,6 +376,7 @@ export default {
     requireHumanIdleMs: 120000,
   },
   whip: { style: 'strict', requireReceipt: true },
+  notify: { beep: true, toast: 'auto' },   // toast：Windows 上默认开（收工时弹一条）
 }
 ```
 
@@ -335,7 +388,7 @@ export default {
 
 ## cw run 结束后，主人会看到什么
 
-1. **终端小结 + 响铃**（可配 webhook 推到飞书/钉钉/Slack/Server 酱）；
+1. **终端小结 + 响铃 + Windows 原生 toast**（`notify.toast`，默认 Windows 上开；还能配 webhook 推到飞书/钉钉/Slack/Server 酱）；
 2. **`CW-REPORT.md`**：一份 30 秒能读完的交代——干了什么、为什么停、还剩什么没做、每轮的判定与鞭子；
 3. **`.cyber/journal.jsonl`**：机器可读的完整事件流（含每一条抽出去的鞭子原文）；
 4. **`.cyber/state.json`**：断点续跑状态。中途 Ctrl+C / 断电后，`cw run` 直接接着干。
@@ -357,22 +410,30 @@ bin/cw.mjs                 可执行入口（含 Ctrl+C 优雅收尾）
 src/
   cli.mjs                  命令分发
   config.mjs               配置默认值/校验（默认安全）
-  plan.mjs                 方案文档解析（中英双语章节 + 勾选 + 显式标记）
+  plan.mjs                 方案文档解析（中英双语章节 + 勾选 + 显式标记 + 合同指纹）
+  dsh-profile.mjs          DSH 的 SDK JSON-RPC profile 模板与安装（cw dsh-profile）
   judge/                   rule（零成本）/ llm（OpenAI 兼容）/ human（终端或文件裁决）/ chain
   engine/
     loop.mjs               主循环：等空闲 → 读回答 → 采证据 → 判定 → 抽鞭 → 循环
-    evidence.mjs           验收命令 / git 改动 / 指纹（缓存）
+    multi.mjs              多 agent 并行：展开 agents[]、共享预算、合并报告
+    budget.mjs             共享预算（总轮次/总时长/总花费，谁用掉了多少）
+    panel.mjs              cw status --watch 的实时面板（纯渲染，可单测）
+    evidence.mjs           验收命令 / git 改动 / 指纹（缓存）/ 方案合同防篡改
     whip.mjs               鞭子组装（短、具体、带安全约束与回执要求）
-    journal.mjs            JSONL 事件流 + CW-REPORT.md
-    state.mjs              断点续跑状态 + 暂停哨兵
-  adapters/                dsh / codex / opencode / cursor / acp / human-sim / generic-cli / mcp-mailbox / fake
-  ui/win/ui-driver.ps1     Windows 拟人驱动（P/Invoke + UIA + SendInput，PowerShell 5.1，零依赖）
-  util/                    多帧 zstd、sqlite（WAL 回退）、JSON-RPC stdio、HTTP、子进程、时间、文本
-test/                      node --test（55 个用例，含完整闭环、护栏、MCP 与 ACP 协议、钩子契约）
+    journal.mjs            JSONL 事件流 + CW-REPORT.md（含验收命令历史趋势）
+    state.mjs              断点续跑状态 + 暂停哨兵 + 合同基线
+  adapters/                dsh / dsh-jsonrpc / codex / opencode / cursor / acp / human-sim / generic-cli / mcp-mailbox / fake
+  ui/
+    index.mjs              按平台挑驱动（win32 / darwin / linux）
+    windows.mjs + win/ui-driver.ps1   Windows（P/Invoke + UIA + SendInput，PowerShell 5.1，零依赖）
+    darwin.mjs             macOS（osascript + System Events）
+    linux.mjs              Linux（xdotool + xclip/xsel/wl-clipboard）
+  util/                    多帧 zstd、sqlite（WAL 回退）、JSON-RPC stdio、HTTP、子进程、toast、时间、文本
+test/                      node --test（134 个用例，含完整闭环、护栏、多 agent、并行预算、协议与钩子契约）
 fixtures/                  测试夹具（放在 test/ 之外的原因见文件头注释——Node 会把 test/ 下所有 .mjs 当测试跑）
 examples/lazy-agent/       离线端到端演示
 docs/                      设计、适配器、安全、各家逆向报告
-templates/                 给 agent 的规则片段（让它配合监工）
+templates/                 给 agent 的规则片段 + DSH 的 jrpc profile 模板
 ```
 
 ## 环境要求
@@ -380,8 +441,9 @@ templates/                 给 agent 的规则片段（让它配合监工）
 - **Node ≥ 22.15**（推荐 24）：`node:sqlite`（读 codex/opencode/cursor 的库）与 `node:zlib` 的 zstd
   （读 DSH 的多帧会话文件）都需要它；
 - **零运行时依赖**：没有 `npm install`，没有构建步骤，直接 `node bin/cw.mjs`；
-- 拟人通道目前是 **Windows** 实现（UIA + SendInput 通过自带的 Windows PowerShell 5.1 调用）。
-  macOS/Linux 的对应实现（`osascript` / `xdotool`）接口已经留好，欢迎 PR。
+- 拟人通道三个平台都有驱动：Windows（系统自带 Windows PowerShell 5.1 + UIA + SendInput）、
+  macOS（`osascript`，需辅助功能权限）、Linux（`xdotool` + 剪贴板工具，Wayland 需 XWayland）。
+  `cw doctor` 会告诉你本平台还差什么；mac/Linux 的驱动有单测但**尚未在真机上实测**（开发机只有 Windows）。
 
 ## 为什么要做这个
 

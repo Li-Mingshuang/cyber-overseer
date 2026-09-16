@@ -7,6 +7,27 @@
 
 ### 新增
 
+- **多 agent 并行监工**：配置 `agents: [...]`，一个监工进程并行盯多个 agent（Cursor 写前端、codex 改后端）。
+  每个条目独立判定/抽鞭（自己的 adapter / 目录 / 方案 / 判定器），轮次/时长/花费**共享一套预算**
+  （不会变成 N 倍账单），分项报告 `CW-REPORT-<name>.md` 与独立事件流 `.cyber/agents/<name>/`，
+  总报告把结果与预算去向合并成一张表；任一 agent 出错被隔离，不影响其它
+- **`cw status --watch`**：终端实时面板——当前轮次、最近判定、最近一条鞭子、验收命令状态、花费、
+  距静默期还有多久；多 agent 与单 agent 共用一套渲染；"状态说在跑但很久没落盘"会提示"可能已停"
+- **Windows 原生 toast 通知**（`notify.toast`，默认 Windows 上开）：收工/卡住时弹一条，
+  内容用 base64 传递（不会变成命令注入）；`cw toast` 可当场自检（本机实测 `CW_TOAST_OK`）
+- **DSH 的 SDK stdio JSON-RPC 通道**（`adapter: 'dsh-jsonrpc'`）：常驻 `dsh --profile jrpc` 进程，
+  `session/prompt` 注入 + `session.event` / `session.status` 事件流观测；`cw dsh-profile --install`
+  一键建 profile（写清单 + patch + pnpm-workspace，并把插件包软链到 `profiles/node_modules`，免管理员），
+  已存在的文件绝不覆盖；协议竞态（必须先等 `initialize` 再发 prompt）由单测与真子进程夹具双重钉死
+- **拟人通道的 macOS / Linux 驱动**：`osascript`（System Events，Ctrl 组合自动翻成 Command、
+  辅助功能权限检测）与 `xdotool` + `xclip/xsel/wl-clipboard`（Wayland 与缺依赖会明确说不可用，
+  宁可不动也不误发）；三平台统一接口，`cw doctor` / `cw windows` 给出本平台结论
+- **读回强化**：焦点被输入框抢走时，按一串候选点（`readerClickPoints`）挨个"点对话区 → 再复制"；
+  可选 `blurComposer: 'esc'` 先把焦点赶出输入框
+- **证据强化（两条）**：① 方案文档"合同"防篡改——验收标准/禁止事项/任务清单在第一轮取基线，
+  之后任何移除或改写都判定为"改弱了"并**拒绝收工**（`evidence.planGuard`，可用
+  `allowPlanWeakening` 显式放行）；② 验收命令的**历史趋势**进报告（"从红到绿 / 一直通过 / 仍未通过"），
+  不再只看最后一次
 - **`cw "<一句话>"` 一句话起步（零配置）**：自动选 agent（优先 DSH，且本项目已有会话就接着那段对话）、
   嗅探验收命令（package.json / pytest / cargo / go / make / verify.mjs）、生成方案文档
   （写进 `.cyber/PLAN.md`，不碰项目根的 PLAN.md）、直接开跑，并把决定打印给你过目。
@@ -21,6 +42,9 @@
 
 ### 修复
 
+- **拟人通道的焦点探针会删掉主人正在写的草稿**：旧实现"粘贴探针 → Ctrl+A → Delete"清理，
+  而"输入框里有没有草稿"是在这之后才检查的——等于先毁掉再检查。现在改成"只读预检 + **Ctrl+Z 撤销**"，
+  并在读回"草稿 + 探针"时明确返回 `draft`，调用方一个字符都不动地放弃这一鞭
 - **方案文档里的"标记说明文字"被当成 agent 的宣告**：自动生成的方案会写"教 agent 怎么写标记"，
   而判定当时拿方案文档去匹配 `<!-- CW:DONE -->` / `<!-- CW:BLOCKED -->`，导致监工一看方案就判定
   受阻、或凭空判定已完成直接收工。现在标记**只认 agent 的回答**（方案里的字面标记要显式开
@@ -32,6 +56,15 @@
   两个静默误判路径，分别用"每批按键前复查前台窗口"与"剪贴板哨兵 + 写后回读校验"修掉
 - `.ps1` 必须带 UTF-8 BOM（Windows PowerShell 5.1 无 BOM 时按 GBK 读，中文注释会吞引号导致语法错）：
   新增 `npm run fix:ps1-bom` 与 lint 强制检查
+
+### 工程
+
+- 测试 **55 → 134 个用例**：新增多 agent 并行与共享预算、实时面板渲染、toast 防注入、
+  三平台驱动（假的 runFn 覆盖命令构造与解析）、DSH JSON-RPC（进程内假传输层 + 真子进程夹具）、
+  合同防篡改与验收历史
+- `templates/dsh-profile-jrpc/` 的模板文件由生成器产出，并被测试**逐字节比对**（防止文档漂移）
+- 文档同步：`docs/ADAPTERS.md` 增加 DSH JSON-RPC 一节与三平台驱动对照表，
+  `docs/DESIGN.md` 记录"证据会不会被骗"的两条加固，`docs/SAFETY.md` 记录草稿保护的教训
 
 ### OCR
 
