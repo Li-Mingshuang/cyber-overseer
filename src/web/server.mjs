@@ -86,6 +86,17 @@ export async function startWebUi(opts = {}) {
           return sendJson(res, 200, { ok: true, ...(await probeAdapters(cwd, log)) })
         case '/api/sessions':
           return sendJson(res, 200, { ok: true, ...(await listSessions(cwd, body.adapter ?? url.searchParams.get('adapter'), log)) })
+        case '/api/poke': {
+          // 催工：agent 一停下（或在等人）就催它继续 —— 界面上最常用的那个按钮
+          recents.remember(cwd)
+          const started = supervisor.start({
+            cwd,
+            log,
+            mode: 'poke',
+            maxNudges: Number(body.times ?? 30),
+          })
+          return sendJson(res, 200, { ok: started.ok !== false, ...started })
+        }
         case '/api/quick': {
           // 一句话起步：自动选 agent / 猜验收命令 / 生成方案 → 直接开跑（界面的主入口）
           const { prepareQuickRun, describeQuickRun } = await import('../quick.mjs')
@@ -183,22 +194,28 @@ function createSupervisor({ log }) {
   return {
     get meta() { return meta },
     get lines() { return lines },
-    start({ cwd, log: logger, dryRun = false, planFile = null, configFile = null }) {
+    start({ cwd, log: logger, dryRun = false, planFile = null, configFile = null, mode = null, maxNudges = null }) {
       if (child && meta.running) return { ok: false, error: '已经在跑了（先停止）', ...meta }
-      const args = [CLI, dryRun ? 'watch' : 'run', '--cwd', cwd]
-      // 显式钉住这几个路径到项目目录：项目配置里的 plan/report/journal 常常是"相对仓库根"写的，
-      // 而这里的工作目录是项目目录，不显式指定就会被拼重（真实踩到过两次）。
-      args.push('--journal-dir', join(cwd, '.cyber'))
-      args.push('--state-file', join(cwd, '.cyber', 'state.json'))
-      args.push('--report', join(cwd, 'CW-REPORT.md'))
-      if (planFile) args.push('--plan', resolve(cwd, planFile))
-      // 配置文件：一句话起步用 auto.config.json，界面表单用 ui.config.json
-      const explicitConfig = configFile ? resolve(cwd, configFile) : null
-      const uiConfig = join(cwd, '.cyber', 'ui.config.json')
-      if (explicitConfig && existsSync(explicitConfig)) args.push('--config', explicitConfig)
-      else if (existsSync(uiConfig)) args.push('--config', uiConfig)
+      // 三种模式：run（完整监工）/ watch（演练）/ poke（催工：停了或在等人就催它继续）
+      const command = mode ?? (dryRun ? 'watch' : 'run')
+      const args = [CLI, command, '--cwd', cwd]
+      if (command === 'poke') {
+        if (maxNudges) args.push('--times', String(maxNudges))
+      } else {
+        // 显式钉住这几个路径到项目目录：项目配置里的 plan/report/journal 常常是"相对仓库根"写的，
+        // 而这里的工作目录是项目目录，不显式指定就会被拼重（真实踩到过两次）。
+        args.push('--journal-dir', join(cwd, '.cyber'))
+        args.push('--state-file', join(cwd, '.cyber', 'state.json'))
+        args.push('--report', join(cwd, 'CW-REPORT.md'))
+        if (planFile) args.push('--plan', resolve(cwd, planFile))
+        // 配置文件：一句话起步用 auto.config.json，界面表单用 ui.config.json
+        const explicitConfig = configFile ? resolve(cwd, configFile) : null
+        const uiConfig = join(cwd, '.cyber', 'ui.config.json')
+        if (explicitConfig && existsSync(explicitConfig)) args.push('--config', explicitConfig)
+        else if (existsSync(uiConfig)) args.push('--config', uiConfig)
+      }
       child = spawn(process.execPath, args, { cwd, env: process.env, windowsHide: true })
-      meta = { running: true, pid: child.pid, cwd, startedAt: Date.now(), exitCode: null, dryRun }
+      meta = { running: true, pid: child.pid, cwd, startedAt: Date.now(), exitCode: null, dryRun, mode: command }
       lines.length = 0
       child.stdout.setEncoding('utf8')
       child.stderr.setEncoding('utf8')

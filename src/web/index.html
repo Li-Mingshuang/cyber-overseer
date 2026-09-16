@@ -76,8 +76,27 @@
 
 <main>
   <div>
+    <section class="card" style="border-color:#5c2424; background:#1f1414">
+      <h2><span>🥊 催工 <span class="muted">（最常用：agent 一停下就催它继续）</span></span>
+        <span class="row">
+          <select id="pokeTimes" style="width:auto">
+            <option value="10">最多催 10 次</option>
+            <option value="30" selected>最多催 30 次</option>
+            <option value="100">最多催 100 次</option>
+          </select>
+        </span>
+      </h2>
+      <div class="row">
+        <button id="pokeStart" class="primary" style="flex:1">盯着它，停了就催</button>
+      </div>
+      <div class="muted" style="margin-top:8px">
+        不需要方案文档、不需要验收命令、不需要配置。它在跑就不打扰；它停下（或在等你回话/等审批）就催它自己往下走。
+        停止条件：它写 <code>CW:DONE</code> ／ 连着两轮没变化 ／ 催够次数 ／ 点「停止」。
+      </div>
+    </section>
+
     <section class="card" style="border-color:#5c3a24; background:#1d1713">
-      <h2><span>🚀 一句话起步 <span class="muted">（不用配任何东西）</span></span></h2>
+      <h2><span>🚀 一句话起步 <span class="muted">（要"验收全绿才算完"时用）</span></span></h2>
       <div class="row">
         <input id="quickText" placeholder="说一句话，例如：把登录页改成深色主题并跑通测试" style="flex:1; min-width:260px">
         <button id="quickStart" class="primary">开始监工</button>
@@ -86,7 +105,10 @@
       <div class="muted" id="quickDecided" style="margin-top:8px">它会自动选 agent、猜验收命令、生成方案，然后把决定打印在这里。</div>
     </section>
 
-    <section class="card">
+    <details class="card" id="advancedCard">
+      <summary style="font-size:13px; color:var(--dim)">高级：方案文档 / 适配器 / 验收命令 / 护栏（平时不用管）</summary>
+      <div style="margin-top:10px">
+        <section class="card">
       <h2>
         <span>① 方案文档 <span class="muted" id="planFile"></span></span>
         <span class="row">
@@ -102,6 +124,8 @@
         <span class="muted">判定基于方案勾选 + 验收命令 + 工作区改动</span>
       </div>
     </section>
+      </div>
+    </details>
 
     <section class="card">
       <h2>③ 监工日志 <span class="muted">（子进程输出）</span></h2>
@@ -336,11 +360,21 @@ function renderRun(state) {
 }
 
 function renderTimeline(journal) {
-  const events = (journal ?? []).filter(e => e.kind === 'verdict' || e.kind === 'whip' || e.kind === 'guard' || e.kind === 'stop' || e.kind === 'error' || e.kind === 'plan-reload')
+  const events = (journal ?? []).filter(e =>
+    e.kind === 'verdict' || e.kind === 'whip' || e.kind === 'guard' || e.kind === 'stop' ||
+    e.kind === 'error' || e.kind === 'plan-reload' || e.kind === 'poke-decision')
   if (!events.length) { $('timeline').innerHTML = '<span class="muted">还没有记录。</span>'; return }
   const html = []
   for (const e of events.slice(-40).reverse()) {
-    if (e.kind === 'verdict') {
+    if (e.kind === 'poke-decision') {
+      // 催工模式：显示"它当时什么状态、监工做了什么"
+      const label = e.action === 'wait' ? '等它' : (e.action === 'nudge' ? '催了一下' : '停下')
+      html.push(`<div class="ev ${e.action === 'nudge' ? 'continue' : (e.action === 'stop' ? 'done' : '')}">
+        <div><b>${label}</b> <span class="muted">agent 状态 ${e.status ?? '?'}｜第 ${e.nudges ?? 0} 次催促</span></div>
+        <div class="meta">${escapeHtml(e.reason ?? '')}</div>
+        ${e.answerTail ? `<pre>${escapeHtml(e.answerTail)}</pre>` : ''}
+      </div>`)
+    } else if (e.kind === 'verdict') {
       html.push(`<div class="ev ${e.status}">
         <div><b>第 ${e.round} 轮判定：${e.status}</b> <span class="muted">置信度 ${(e.confidence ?? 0).toFixed(2)}｜${e.judge ?? ''}</span></div>
         <div class="meta">${escapeHtml(e.reason ?? '')}</div>
@@ -510,6 +544,17 @@ async function quickRun({ planOnly = false, dryRun = false } = {}) {
 $('quickStart').addEventListener('click', () => quickRun({}))
 $('quickPlan').addEventListener('click', () => quickRun({ planOnly: true }))
 $('quickText').addEventListener('keydown', (e) => { if (e.key === 'Enter') quickRun({}) })
+
+// ---------- 催工（最常用那个按钮） ----------
+$('pokeStart').addEventListener('click', async () => {
+  if (!CWD) return toast('先在顶部填一个项目目录', 'warn')
+  try {
+    const r = await api('/api/poke', { times: Number($('pokeTimes').value || 30) })
+    if (!r.ok) return toast(r.error ?? '启动失败', 'warn')
+    toast('开始催工：它一停下就催它继续')
+    refresh(false)
+  } catch (error) { toast('启动失败：' + error.message, 'bad') }
+})
 
 async function startRun(dryRun) {
   try {

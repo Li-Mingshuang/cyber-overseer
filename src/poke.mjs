@@ -173,6 +173,15 @@ export async function runPoke(opts) {
       nudgeText: opts.nudge,
       waitingNudgeText: opts.waitingNudge,
     })
+    // 每次都记一笔：界面/报告要能看到"它当时是什么状态、我做了什么决定"
+    journal.event('poke-decision', {
+      status: snapshot.status,
+      turn: snapshot.turn ?? null,
+      action: decision.action,
+      reason: decision.reason,
+      nudges,
+      answerTail: oneLine(String(snapshot.lastAnswer ?? '').slice(-160), 160),
+    })
     opts.onEvent?.({ type: 'decision', decision, snapshot: { status: snapshot.status, turn: snapshot.turn } })
 
     if (decision.action === 'stop') { stopReason = decision.reason; break }
@@ -186,12 +195,19 @@ export async function runPoke(opts) {
     nudges++
     const text = decision.text ?? DEFAULT_NUDGE
     log.step(`第 ${nudges} 次催促：${decision.reason}`)
-    // "它在等人类"时用 steer（插进当前回合，等价于回答它的问题）；空闲时用 queue（排新回合）
+    // 催话要送到**正在盯的那个会话**里，否则就变成"盯着 A、去催一个新开的 B"（实测踩到过）。
+    // DSH 走 HTTP 注入；"它在等人类"这种用 mode=steer（插进当前回合，等价于回答它的问题）。
     const isWaiting = snapshot.status === 'awaiting-input' || snapshot.status === 'awaiting-approval'
-    if (isWaiting && adapter.id === 'dsh' && (agent.options?.whip === 'http')) {
-      adapter.options = { ...(agent.options ?? {}), httpMode: 'steer' }
+    if (adapter.id === 'dsh' && session?.id && opts.noInject !== true) {
+      adapter.options = { ...(adapter.options ?? {}), whip: 'http', httpMode: isWaiting ? 'steer' : 'queue' }
     }
-    const result = await adapter.whip(text, session, { config: { guard: {} }, signal: opts.signal })
+    let result = await adapter.whip(text, session, { config: { guard: {} }, signal: opts.signal })
+    if (result.ok === false && result.kind === 'setup' && adapter.id === 'dsh') {
+      // HTTP 注入不可用（界面服务没跑/接口不通）→ 退回 headless 新会话，并说明白
+      log.warn(`注入活会话失败（${result.detail ?? ''}）→ 退回 headless 起一个新会话继续`)
+      adapter.options = { ...(adapter.options ?? {}), whip: 'headless' }
+      result = await adapter.whip(text, session, { config: { guard: {} }, signal: opts.signal })
+    }
     journal.event(result.ok !== false ? 'whip' : 'error', {
       round: nudges, chars: text.length, whip: text,
       detail: result.detail ?? null, mode: result.mode ?? null,
