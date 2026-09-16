@@ -7,7 +7,7 @@
  * @module cyber-overseer/adapters/index
  */
 
-export const ADAPTER_IDS = ['dsh', 'codex', 'opencode', 'cursor', 'human-sim', 'generic-cli', 'mcp-mailbox', 'fake']
+export const ADAPTER_IDS = ['dsh', 'codex', 'opencode', 'cursor', 'acp', 'human-sim', 'generic-cli', 'mcp-mailbox', 'fake']
 
 /** 适配器清单（给 `cw adapters` 用）。 */
 export const ADAPTER_CATALOG = [
@@ -15,6 +15,7 @@ export const ADAPTER_CATALOG = [
   { id: 'codex', label: 'OpenAI Codex CLI', channel: '读 state_5.sqlite + rollout.jsonl；`codex exec resume`', note: '' },
   { id: 'opencode', label: 'opencode', channel: '读 opencode.db（message/part）；`opencode run -s`', note: '' },
   { id: 'cursor', label: 'Cursor IDE', channel: '读 state.vscdb；官方 stop 钩子 / desktop bridge / 拟人', note: '推荐 hooks 模式' },
+  { id: 'acp', label: 'ACP（Agent Client Protocol）', channel: '标准协议：同连接多轮 session/prompt，兼容 DSH/opencode/Zed 生态', note: '跨 agent 通用，但只可见成文文本' },
   { id: 'human-sim', label: '拟人通道（任意 GUI）', channel: 'UIA/剪贴板读；抢焦点打字 + 回车', note: 'Windows 实现，万能兜底' },
   { id: 'generic-cli', label: '通用 CLI 循环', channel: '模板命令抽鞭，stdout 即回答', note: '任何 CLI agent' },
   { id: 'mcp-mailbox', label: 'MCP 信箱', channel: '给 agent 挂一个 MCP 服务，让它每回合来取指令', note: '需要 agent 支持 MCP' },
@@ -37,6 +38,8 @@ export function createAdapter(adapterId, ctx) {
       return requireFactory(ctx, './opencode.mjs', 'createOpencodeAdapter')
     case 'cursor':
       return requireFactory(ctx, './cursor.mjs', 'createCursorAdapter')
+    case 'acp':
+      return requireFactory(ctx, './acp.mjs', 'createAcpAdapter')
     case 'human-sim':
       return requireFactory(ctx, './human-sim.mjs', 'createHumanSimAdapter')
     case 'generic-cli':
@@ -83,6 +86,7 @@ export async function loadAdapters() {
     ['./codex.mjs', 'createCodexAdapter'],
     ['./opencode.mjs', 'createOpencodeAdapter'],
     ['./cursor.mjs', 'createCursorAdapter'],
+    ['./acp.mjs', 'createAcpAdapter'],
     ['./human-sim.mjs', 'createHumanSimAdapter'],
     ['./generic-cli.mjs', 'createGenericCliAdapter'],
     ['./mcp-mailbox.mjs', 'createMcpMailboxAdapter'],

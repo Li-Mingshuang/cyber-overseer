@@ -35,9 +35,10 @@
     "node": ">=22.15.0"
   },
   "scripts": {
-    "test": "node --test test/",
-    "test:watch": "node --test --watch test/",
+    "test": "node --test \"test/*.test.mjs\"",
+    "test:watch": "node --test --watch \"test/*.test.mjs\"",
     "demo": "node bin/cw.mjs run --config examples/lazy-agent/cw.config.mjs",
+    "demo:reset": "node examples/lazy-agent/reset.mjs",
     "doctor": "node bin/cw.mjs doctor",
     "lint": "node scripts/lint.mjs"
   },

@@ -87,6 +87,7 @@ node bin/cw.mjs run --config examples/lazy-agent/cw.config.mjs
 | **Codex CLI** | `state_5.sqlite/threads` + `sessions/**/rollout-*.jsonl` | `codex exec resume <id> -C <dir> -s workspace-write -c approval_policy=never --json -o <file> "…"` | 真闭环 |
 | **opencode** | `opencode.db`（`message`/`part` 投影表） | `opencode run -s <sessionID> --dir <dir> --format json "…"` | 真闭环 |
 | **Cursor** | `state.vscdb`（`cursorDiskKV`） | 官方 **`stop` 钩子返回 `{"followup_message":"…"}`**（无门控、由 Cursor 自己驱动） | 真闭环 |
+| **任何 ACP agent** | 协议通道（DSH / opencode / Zed 生态都实现了 ACP） | 标准协议 `session/prompt`：**同一连接可反复投喂**，像真人一样一直跟同一个 agent 对话 | 真闭环 |
 | **任何 GUI agent** | 拟人通道：剪贴板/UIA 读对话框 | 拟人通道：抢焦点 → 粘贴 → 回车（带三重保险） | 通用兜底 |
 | **任何 CLI agent** | 命令 stdout / 日志文件 | `command: ['my-agent', '{text}']` 每次起一个进程 | 通用兜底 |
 | **任何 MCP agent** | `.cyber/agent-reports.jsonl` | 挂内置 MCP 服务：agent 每回合调 `overseer_check` 取指令 | 通用兜底 |
@@ -252,10 +253,11 @@ src/
     whip.mjs               鞭子组装（短、具体、带安全约束与回执要求）
     journal.mjs            JSONL 事件流 + CW-REPORT.md
     state.mjs              断点续跑状态 + 暂停哨兵
-  adapters/                dsh / codex / opencode / cursor / human-sim / generic-cli / mcp-mailbox / fake
+  adapters/                dsh / codex / opencode / cursor / acp / human-sim / generic-cli / mcp-mailbox / fake
   ui/win/ui-driver.ps1     Windows 拟人驱动（P/Invoke + UIA + SendInput，PowerShell 5.1，零依赖）
-  util/                    多帧 zstd、sqlite（WAL 回退）、HTTP、子进程、时间、文本
-test/                      node --test（39 个用例，含完整闭环与护栏）
+  util/                    多帧 zstd、sqlite（WAL 回退）、JSON-RPC stdio、HTTP、子进程、时间、文本
+test/                      node --test（55 个用例，含完整闭环、护栏、MCP 与 ACP 协议、钩子契约）
+fixtures/                  测试夹具（放在 test/ 之外的原因见文件头注释——Node 会把 test/ 下所有 .mjs 当测试跑）
 examples/lazy-agent/       离线端到端演示
 docs/                      设计、适配器、安全、各家逆向报告
 templates/                 给 agent 的规则片段（让它配合监工）

@@ -153,6 +153,58 @@ Settings → Beta → "Allow CLI to access desktop agents" 并重启），以及
 
 ---
 
+## ACP（Agent Client Protocol）—— 跨 agent 的标准通道
+
+```js
+agent: {
+  adapter: 'acp',
+  options: {
+    preset: 'opencode',        // opencode | dsh | gemini，或自己给 command
+    // command: ['node', '<deepseek-harness>/packages/examples/acp-demo/lib/bin.js', '--config', 'examples/acp-agent/cordis.yml'],
+    // dshCheckout: 'C:/path/to/deepseek-harness',   // 用于替换命令里的 <deepseek-harness> 占位符
+    acpCwd: '/path/to/project',                     // session/new 的 cwd（agent 在这里干活）
+    permissionMode: 'workspace-write',              // 传给 dsh 的 DSH_PERMISSION_MODE
+  },
+}
+```
+
+ACP 是"客户端 ↔ agent"的开放协议（DSH、opencode、Zed 生态都实现了）。对监工来说它有一个很舒服的
+性质：**同一个连接里的会话可以反复投喂 prompt**，所以监工能像真人一样一直跟同一个 agent 对话——
+比"每鞭起一个全新会话"更接近真人监工（对话上下文不丢）。
+
+协议帧（实测自 DSH 的真实快照，见 [`recon/dsh-control-surfaces.md`](recon/dsh-control-surfaces.md) §3）：
+
+```jsonc
+// 客户端 → agent
+{ "jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}} }
+{ "jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"…","mcpServers":[]} }        // → {sessionId}
+{ "jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"…","prompt":[{"type":"text","text":"…"}]} }
+{ "jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"…"} }
+
+// agent → 客户端
+{ "jsonrpc":"2.0","method":"session/update","params":{"sessionId":"…",
+    "update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"…"}}} }
+{ "jsonrpc":"2.0","id":1,"method":"session/request_permission","params":{"toolCall":{…},"options":[…]} }
+```
+
+**必须知道的限制**（否则会误判 agent 在偷懒）：
+
+- 只看得见**成文助手文本**（`agent_message_chunk`）：拿不到工具调用、reasoning、usage →
+  判定必须依赖方案勾选与验收命令，别指望从协议里看出"它干了多少活"；
+- **跨连接不能恢复**（没有 `session/load`/`resume`）：一次 `cw run` 一个连接，重启就是新会话；
+- 一个会话同时只允许一个 in-flight prompt（第二个会报错）→ 适配器会返回 `kind:'transient'`，
+  引擎下一轮再试，不会误判成出错。
+
+**审批**：`session/request_permission` 是 agent 反向问"能不能执行"。默认**拒绝**（fail-closed），
+只有 `guard.autoApprove` 明确打开才放行——监工不替主人点"同意"。
+（协议用的是客户端反向请求，`JsonRpcStdioClient` 已经处理好了"服务端 → 客户端请求"这一侧。）
+
+**一个实现细节值得记一笔**：DSH 的 JSON-RPC 传输层对每行 `void handleLine(line)` **不 await**，
+所以同一批到达的帧会并发处理 → 客户端**必须先等到 `initialize` 的响应再发 `session/prompt`**，
+否则会撞上"用了默认模型"之类的竞态（我们的客户端所有请求都带 id 且等待响应，天然满足）。
+
+---
+
 ## 拟人通道（任何 GUI agent）
 
 ```js

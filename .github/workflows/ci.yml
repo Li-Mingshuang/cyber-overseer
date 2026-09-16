@@ -1,0 +1,55 @@
+# 持续集成：零依赖项目的 CI 很便宜——装个 Node 就能把三件事跑完
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows 是"拟人通道"的主场，必须一起测（哪怕是 Linux 上跑同一套逻辑）
+        os: [ubuntu-latest, windows-latest]
+        node: ['22.15', '24']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # 本项目零运行时依赖，所以这里**故意不装任何东西**——
+      # 如果哪天这步需要 npm install 了，说明有人引入了依赖，那是要慎重讨论的事。
+      - name: 自检（语法 / ESM 一致性 / stdout 契约）
+        run: node scripts/lint.mjs
+
+      - name: 单元与协议测试
+        run: node --test "test/*.test.mjs"
+
+      - name: 环境自检（会打印本机各 agent 的可用性，失败不算错误）
+        run: node bin/cw.mjs doctor --cwd .
+        continue-on-error: true
+
+      - name: 离线端到端演示（把懒惰劳工抽到验收全绿）
+        shell: bash
+        run: |
+          node examples/lazy-agent/reset.mjs
+          node bin/cw.mjs run --config examples/lazy-agent/cw.config.mjs
+          # 演示必须真的以"收工"结束（退出码 0），否则 CI 失败
+          test -f examples/lazy-agent/CW-REPORT.md
+          grep -q "目标已完成" examples/lazy-agent/CW-REPORT.md
+
+      - name: 上传监工报告（失败时用于排查）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cw-report-${{ matrix.os }}-${{ matrix.node }}
+          path: |
+            examples/lazy-agent/CW-REPORT.md
+            examples/lazy-agent/.cyber/journal.jsonl
+          if-no-files-found: ignore

@@ -11,6 +11,23 @@
 | [`opencode.md`](opencode.md) | opencode | ① 事件溯源 + 投影：读 `message`/`part` 而不是 `event`；② `step-finish.reason === 'stop'` 才是真的收工；③ `run -c` **不按 cwd 过滤**（永远显式 `-s`）；④ `run` 默认自动拒绝权限请求 |
 | [`cursor.md`](cursor.md) | Cursor IDE 3.15.6 | ① 回答在 `cursorDiskKV['bubbleId:…'].text`，顺序看 `composerData.fullConversationHeadersOnly`；② **官方 `stop` 钩子返回 `{"followup_message":…}` 就能注入**（无门控）；③ `conversation-search.db` 滞后 ≥1 轮，**不能**用来读最新回答；④ `cursor-agent` CLI 不存在 |
 
+## 已被代码采纳的结论
+
+| 结论 | 用在哪 |
+|---|---|
+| 多帧 zstd 必须逐帧解 | `src/util/zstd-frames.mjs`（DSH 适配器的读取层） |
+| 最后一次回答要回退找含 `text` 的 `assistant/message` | `src/adapters/dsh-session.mjs` |
+| `turn/start|end` 末次折叠判忙闲、`approval/asked` 配对判审批 | `src/adapters/dsh-session.mjs` |
+| `POST /api/session.prompt` 信封（queue/steer） | `src/adapters/dsh.mjs` 的 `whip: 'http'`（且硬编码拒绝非本机地址） |
+| headless 无 resume、stdout = 最后一条回答 | `src/adapters/dsh.mjs` 的 `whip: 'headless'` |
+| ACP 帧形状与"同连接可多轮" | `src/adapters/acp.mjs` + `src/util/jsonrpc-stdio.mjs`（含"先等 initialize"的竞态规避） |
+| codex 的 rollout 只有 ctime 会更新 | `src/adapters/codex.mjs` 的活跃判定 |
+| `user_message` 没有 turn_id | `src/adapters/codex.mjs` 的回合归并 |
+| opencode 的 `step-finish.reason === 'stop'` 判收工 | `src/adapters/opencode.mjs` |
+| Cursor 的 `stop` 钩子 `followup_message` | `src/hooks.mjs`（`cw hooks install cursor`） |
+| Cursor 只读 `cursorDiskKV`、search.db 滞后 | `src/adapters/cursor.mjs` |
+| sqlite 惰性打开 + WAL 需拷贝 | `src/util/sqlite.mjs` |
+
 ## 复现方式
 
 报告里附的探针脚本、数据库副本与原始 JSON 证据都在 `.recon-tmp/`（已 gitignore），

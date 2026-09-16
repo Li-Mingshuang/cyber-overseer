@@ -442,6 +442,10 @@ async function handleApproval(ctx) {
 /** 收尾：写报告 + 通知 + 返回结果。 */
 async function finish(ctx) {
   const { stopReason, verdict, plan, store, journal, adapter, session, log, config } = ctx
+  // 有的适配器持有长连接（ACP）或子进程：收尾时一定要放掉，否则会留下孤儿进程
+  if (typeof adapter?.dispose === 'function') {
+    try { await adapter.dispose() } catch (error) { log?.debug?.(`适配器收尾出错：${error?.message ?? error}`) }
+  }
   const state = store?.state ?? { rounds: [], costUsd: 0 }
   let reportPath = null
   if (journal && plan) {

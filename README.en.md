@@ -45,6 +45,7 @@ anything genuinely undecidable → `needs-human` (never guess "done").
 | **Codex CLI** | `state_5.sqlite/threads` + `sessions/**/rollout-*.jsonl` | `codex exec resume <id> -C <dir> -s workspace-write -c approval_policy=never "…"` |
 | **opencode** | `opencode.db` (`message`/`part` projections) | `opencode run -s <sessionID> --dir <dir> --format json "…"` |
 | **Cursor** | `state.vscdb` (`cursorDiskKV`) | official `stop` hook returning `{"followup_message":"…"}` — Cursor drives the loop itself |
+| **Any ACP agent** | the Agent Client Protocol (DSH, opencode, the Zed ecosystem) | standard `session/prompt` on one long-lived connection — like a human talking to the same agent repeatedly |
 | **Any GUI agent** | human-sim: clipboard/UIA read of the dialog | human-sim: focus → paste → verify → Enter (three safety interlocks) |
 | **Any CLI agent** | command stdout / log file | `command: ['my-agent', '{text}']`, one fresh process per whip |
 | **Any MCP agent** | `.cyber/agent-reports.jsonl` | built-in MCP server: the agent calls `overseer_check` each turn |
