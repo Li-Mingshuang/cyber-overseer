@@ -26,7 +26,10 @@
     "src",
     "docs",
     "templates",
+    "scripts",
     "AGENTS.md",
+    "CHANGELOG.md",
+    "ROADMAP.md",
     "README.md",
     "README.en.md",
     "LICENSE"
@@ -50,8 +53,16 @@
   },
   "dependencies": {},
   "devDependencies": {},
+  "author": "Li-Mingshuang",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cyber-overseer/cyber-overseer.git"
+    "url": "git+https://github.com/Li-Mingshuang/cyber-overseer.git"
+  },
+  "homepage": "https://github.com/Li-Mingshuang/cyber-overseer#readme",
+  "bugs": {
+    "url": "https://github.com/Li-Mingshuang/cyber-overseer/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
