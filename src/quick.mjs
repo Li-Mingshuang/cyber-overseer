@@ -96,8 +96,23 @@ export async function detectAgent(opts) {
     }
 
     // 找这个项目里的会话（"接着刚才那段对话继续盯"）
+    // ⚠️ 只认**工作目录完全一致**的会话：DSH 的会话常常把 cwd 记成父目录，
+    //    若用"包含关系"匹配，就会把兄弟项目的会话当成自己的——实测踩到过：
+    //    在 cyber-overseer 里说一句话，它却要接着「俯视角僵尸射击游戏开发」那个会话。
+    //    宁可不接、起新会话，也不能把监工开到别人的项目上去。
     let session = null
-    try { session = await adapter.resolveSession('latest') } catch { /* 忽略 */ }
+    let nearby = []
+    try {
+      const all = await adapter.listSessions()
+      const norm = (p) => String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+      const mine = all.filter(s => norm(s.cwd) === norm(cwd))
+      nearby = all.filter(s => {
+        const other = norm(s.cwd)
+        const target = norm(cwd)
+        return other && other !== target && (target.startsWith(other + '/') || other.startsWith(target + '/'))
+      })
+      session = mine[0] ?? null
+    } catch { /* 忽略 */ }
 
     if (id === 'dsh') {
       const hasWeb = await dshWebAlive()
@@ -107,16 +122,17 @@ export async function detectAgent(opts) {
           adapter: id,
           options: { whip: 'http', httpEndpoint: 'http://127.0.0.1:3080' },
           session,
-          why: `接着这个项目里已有的 DSH 会话（${oneLine(session.title ?? session.id, 30)}，${session.status ?? ''}），用 HTTP 注入到同一段对话`,
+          why: `接着本项目已有的 DSH 会话（${oneLine(session.title ?? session.id, 30)}，${session.status ?? ''}），用 HTTP 注入到同一段对话`,
         }
       }
+      const nearbyHint = nearby.length
+        ? `（另有 ${nearby.length} 个上层目录的会话不属于本项目，想接着某个请用 --session <id>）`
+        : ''
       return {
         adapter: id,
         options: { whip: 'headless', permissionMode: 'workspace-write' },
         session,
-        why: joinable
-          ? '这个项目里有 DSH 会话，但界面服务没在跑（或会话不可注入）→ 用 headless 每鞭起一个干净劳工'
-          : '用 DSH headless：每鞭起一个干净劳工，记忆靠工作区（PLAN.md + 代码 + git）',
+        why: `用 DSH headless：每鞭起一个干净劳工，记忆靠工作区（PLAN.md + 代码 + git）${nearbyHint}`,
       }
     }
 

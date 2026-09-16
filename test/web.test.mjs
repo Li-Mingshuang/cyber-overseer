@@ -197,3 +197,36 @@ test('界面：最近项目/建议列表可返回（不报错）', async (t) => 
   assert.ok(Array.isArray(data.data.projects))
   assert.ok(Array.isArray(data.data.suggested))
 })
+
+test('界面：一句话起步（只生成方案，安全且不启动监工）', async (t) => {
+  const project = makeProject()
+  t.after(() => rmSync(project, { recursive: true, force: true }))
+  const { call } = await withUi(t, project)
+
+  const quick = await call('/api/quick', { cwd: project, sentence: '把首页做成深色主题', planOnly: true })
+  assert.equal(quick.data.ok, true, quick.data.error ?? '')
+  assert.equal(quick.data.planOnly, true)
+  assert.ok(quick.data.decided.length >= 3, '应打印"监工谁/验收/方案"三行决定')
+  assert.match(quick.data.planPath, /\.cyber[\\/]PLAN\.md$/)
+
+  // 生成的方案不含标记字面形式（否则会被误读成 agent 宣告）
+  assert.doesNotMatch(quick.data.planText, /<!--\s*CW:/i)
+
+  // 方案与配置落盘
+  assert.ok(existsSync(join(project, '.cyber', 'PLAN.md')))
+  assert.ok(existsSync(join(project, '.cyber', 'auto.config.json')))
+
+  // 状态接口应能读到刚生成的方案
+  const state = await call(`/api/state?cwd=${encodeURIComponent(project)}`)
+  assert.equal(state.data.planFile, 'PLAN.md')
+})
+
+test('界面：一句话为空时报错而不是乱跑', async (t) => {
+  const project = makeProject()
+  t.after(() => rmSync(project, { recursive: true, force: true }))
+  const { call } = await withUi(t, project)
+
+  const quick = await call('/api/quick', { cwd: project, sentence: '   ' })
+  assert.equal(quick.data.ok, false)
+  assert.match(quick.data.error, /一句话/)
+})

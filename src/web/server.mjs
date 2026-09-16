@@ -86,6 +86,35 @@ export async function startWebUi(opts = {}) {
           return sendJson(res, 200, { ok: true, ...(await probeAdapters(cwd, log)) })
         case '/api/sessions':
           return sendJson(res, 200, { ok: true, ...(await listSessions(cwd, body.adapter ?? url.searchParams.get('adapter'), log)) })
+        case '/api/quick': {
+          // 一句话起步：自动选 agent / 猜验收命令 / 生成方案 → 直接开跑（界面的主入口）
+          const { prepareQuickRun, describeQuickRun } = await import('../quick.mjs')
+          try {
+            const prepared = await prepareQuickRun({
+              sentence: String(body.sentence ?? ''),
+              cwd,
+              log,
+              preferAgent: typeof body.agent === 'string' ? body.agent : undefined,
+              session: typeof body.session === 'string' ? body.session : undefined,
+              maxRounds: body.maxRounds,
+            })
+            recents.remember(cwd)
+            const decided = describeQuickRun(prepared)
+            if (body.planOnly === true) {
+              return sendJson(res, 200, { ok: true, planOnly: true, planPath: prepared.planPath, decided, planText: prepared.planText })
+            }
+            const started = supervisor.start({
+              cwd,
+              log,
+              dryRun: Boolean(body.dryRun),
+              planFile: prepared.planPath,
+              configFile: prepared.configFile,
+            })
+            return sendJson(res, 200, { ok: started.ok !== false, decided, ...started })
+          } catch (error) {
+            return sendJson(res, 200, { ok: false, error: String(error?.message ?? error) })
+          }
+        }
         case '/api/start':
           recents.remember(cwd)
           return sendJson(res, 200, supervisor.start({
@@ -154,7 +183,7 @@ function createSupervisor({ log }) {
   return {
     get meta() { return meta },
     get lines() { return lines },
-    start({ cwd, log: logger, dryRun = false, planFile = null }) {
+    start({ cwd, log: logger, dryRun = false, planFile = null, configFile = null }) {
       if (child && meta.running) return { ok: false, error: '已经在跑了（先停止）', ...meta }
       const args = [CLI, dryRun ? 'watch' : 'run', '--cwd', cwd]
       // 显式钉住这几个路径到项目目录：项目配置里的 plan/report/journal 常常是"相对仓库根"写的，
@@ -163,8 +192,11 @@ function createSupervisor({ log }) {
       args.push('--state-file', join(cwd, '.cyber', 'state.json'))
       args.push('--report', join(cwd, 'CW-REPORT.md'))
       if (planFile) args.push('--plan', resolve(cwd, planFile))
-      const configFile = join(cwd, '.cyber', 'ui.config.json')
-      if (existsSync(configFile)) args.push('--config', configFile)
+      // 配置文件：一句话起步用 auto.config.json，界面表单用 ui.config.json
+      const explicitConfig = configFile ? resolve(cwd, configFile) : null
+      const uiConfig = join(cwd, '.cyber', 'ui.config.json')
+      if (explicitConfig && existsSync(explicitConfig)) args.push('--config', explicitConfig)
+      else if (existsSync(uiConfig)) args.push('--config', uiConfig)
       child = spawn(process.execPath, args, { cwd, env: process.env, windowsHide: true })
       meta = { running: true, pid: child.pid, cwd, startedAt: Date.now(), exitCode: null, dryRun }
       lines.length = 0

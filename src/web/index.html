@@ -76,6 +76,16 @@
 
 <main>
   <div>
+    <section class="card" style="border-color:#5c3a24; background:#1d1713">
+      <h2><span>🚀 一句话起步 <span class="muted">（不用配任何东西）</span></span></h2>
+      <div class="row">
+        <input id="quickText" placeholder="说一句话，例如：把登录页改成深色主题并跑通测试" style="flex:1; min-width:260px">
+        <button id="quickStart" class="primary">开始监工</button>
+        <button id="quickPlan" class="ghost">只生成方案</button>
+      </div>
+      <div class="muted" id="quickDecided" style="margin-top:8px">它会自动选 agent、猜验收命令、生成方案，然后把决定打印在这里。</div>
+    </section>
+
     <section class="card">
       <h2>
         <span>① 方案文档 <span class="muted" id="planFile"></span></span>
@@ -479,6 +489,27 @@ $('judgeBtn').addEventListener('click', async () => {
   } catch (error) { toast('判定失败：' + error.message, 'bad') }
 })
 $('refreshReport').addEventListener('click', refreshReport)
+
+// ---------- 一句话起步 ----------
+async function quickRun({ planOnly = false, dryRun = false } = {}) {
+  const sentence = $('quickText').value.trim()
+  if (!sentence) return toast('先说一句话，例如：把登录页改成深色主题并跑通测试', 'warn')
+  if (!CWD) return toast('先在顶部填一个项目目录', 'warn')
+  $('quickDecided').textContent = planOnly ? '正在生成方案…' : '正在决定怎么监工…'
+  try {
+    const r = await api('/api/quick', { sentence, planOnly, dryRun })
+    if (!r.ok) { $('quickDecided').textContent = '失败：' + (r.error ?? ''); return toast(r.error ?? '启动失败', 'bad') }
+    $('quickDecided').innerHTML = (r.decided ?? []).map(l => escapeHtml(l)).join('<br>')
+    toast(planOnly ? '方案已生成（监工每轮会重读它）' : (dryRun ? '已开始演练（只判定不注入）' : '已开始监工'))
+    await refresh(true)
+  } catch (error) {
+    $('quickDecided').textContent = '失败：' + error.message
+    toast('失败：' + error.message, 'bad')
+  }
+}
+$('quickStart').addEventListener('click', () => quickRun({}))
+$('quickPlan').addEventListener('click', () => quickRun({ planOnly: true }))
+$('quickText').addEventListener('keydown', (e) => { if (e.key === 'Enter') quickRun({}) })
 
 async function startRun(dryRun) {
   try {

@@ -3,6 +3,42 @@
 本项目的版本记录。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 新增
+
+- **`cw "<一句话>"` 一句话起步（零配置）**：自动选 agent（优先 DSH，且本项目已有会话就接着那段对话）、
+  嗅探验收命令（package.json / pytest / cargo / go / make / verify.mjs）、生成方案文档
+  （写进 `.cyber/PLAN.md`，不碰项目根的 PLAN.md）、直接开跑，并把决定打印给你过目。
+  开关：`--plan-only`、`--agent`、`--session`、`--cmd`、`--verify`、`--max-rounds`、`--no-join`
+- **`cw sessions --live`**：看清有哪些 agent 会话还活着（● 正在跑 / ○ 空闲在等人 / ▲ 等审批 /
+  ▲ 等你回话 / ✖ 出错），带相对时间、标题、项目路径、回合数与事件数
+- **`cw ui` 本地图形界面**（零依赖、单文件前端、只监听 127.0.0.1 并校验 Host 头），
+  顶部就是「一句话起步」输入框；实时时间线显示每轮判定与抽出去的鞭子原文
+- **判定器零配置分支**：没有任务清单时，用「验收命令全绿 + agent 完成宣告（`CW:DONE`）+ 卡死检测」
+  判定；验收全绿但没宣告会先要求自查一次，问过之后仍全绿才收工
+- CLI 覆盖参数 `--report` / `--journal-dir` / `--state-file`（配合"以项目目录为工作目录"启动）
+
+### 修复
+
+- **方案文档里的"标记说明文字"被当成 agent 的宣告**：自动生成的方案会写"教 agent 怎么写标记"，
+  而判定当时拿方案文档去匹配 `<!-- CW:DONE -->` / `<!-- CW:BLOCKED -->`，导致监工一看方案就判定
+  受阻、或凭空判定已完成直接收工。现在标记**只认 agent 的回答**（方案里的字面标记要显式开
+  `judge.rule.trustPlanMarker`），生成方案时也不再写出标记的字面形式
+- **界面启动监工时相对路径被拼重**：项目配置里的 plan/report/journal/state 常写成"相对仓库根"，
+  界面以项目目录为工作目录 → 路径被拼重（实测报错 `读不到方案文档 .../a/a/PLAN.md`）。
+  现在界面把这些路径显式钉到项目目录，读取侧也用同一套路径
+- 拟人通道：**焦点漂移**（主人中途切窗导致按键/复制作用到别的窗口）与**旧剪贴板被当成 agent 回答**
+  两个静默误判路径，分别用"每批按键前复查前台窗口"与"剪贴板哨兵 + 写后回读校验"修掉
+- `.ps1` 必须带 UTF-8 BOM（Windows PowerShell 5.1 无 BOM 时按 GBK 读，中文注释会吞引号导致语法错）：
+  新增 `npm run fix:ps1-bom` 与 lint 强制检查
+
+### OCR
+
+- **接入 RapidOCR（PaddleOCR PP-OCR + ONNX）为默认 OCR 引擎**：`npm run ocr:install` 一键装进
+  仓库内隔离 venv；实测中文正文识别字符相似度 **96.4%** vs Windows 自带 **53.7%**
+- 可插拔引擎层（rapidocr / windows / command / vlm）+ `npm run bench:ocr` 在自己机器上量准确率
+
 ## [0.1.0] — 2026-09-17
 
 第一个可用版本：**让 agent 在人类主人休息时，被抽着把活干完。**
