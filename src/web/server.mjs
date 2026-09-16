@@ -94,9 +94,16 @@ export async function startWebUi(opts = {}) {
             log,
             mode: 'poke',
             maxNudges: Number(body.times ?? 30),
+            session: typeof body.session === 'string' && body.session.trim() ? body.session.trim() : null,
           })
           return sendJson(res, 200, { ok: started.ok !== false, ...started })
         }
+        case '/api/settings':
+          return sendJson(res, 200, (body.apiKey !== undefined || body.judge !== undefined)
+            ? saveSettings(cwd, body)
+            : { ok: true, ...readSettings(cwd) })
+        case '/api/test-api':
+          return sendJson(res, 200, await testApi(cwd, body))
         case '/api/quick': {
           // 一句话起步：自动选 agent / 猜验收命令 / 生成方案 → 直接开跑（界面的主入口）
           const { prepareQuickRun, describeQuickRun } = await import('../quick.mjs')
@@ -194,13 +201,14 @@ function createSupervisor({ log }) {
   return {
     get meta() { return meta },
     get lines() { return lines },
-    start({ cwd, log: logger, dryRun = false, planFile = null, configFile = null, mode = null, maxNudges = null }) {
+    start({ cwd, log: logger, dryRun = false, planFile = null, configFile = null, mode = null, maxNudges = null, session = null }) {
       if (child && meta.running) return { ok: false, error: '已经在跑了（先停止）', ...meta }
       // 三种模式：run（完整监工）/ watch（演练）/ poke（催工：停了或在等人就催它继续）
       const command = mode ?? (dryRun ? 'watch' : 'run')
       const args = [CLI, command, '--cwd', cwd]
       if (command === 'poke') {
         if (maxNudges) args.push('--times', String(maxNudges))
+        if (session) args.push('--session', session)
       } else {
         // 显式钉住这几个路径到项目目录：项目配置里的 plan/report/journal 常常是"相对仓库根"写的，
         // 而这里的工作目录是项目目录，不显式指定就会被拼重（真实踩到过两次）。
@@ -280,6 +288,104 @@ async function readProjectState(cwd, log, supervisor, since = 0) {
   state.supervisor = supervisor.tail(since)
   state.report = existsSync(join(cwd, 'CW-REPORT.md'))
   return state
+}
+
+/**
+ * 读 API 设置（**永不回显密钥本身**，只说"配没配、从哪来"）。
+ */
+function readSettings(cwd) {
+  const config = readConfigInfo(cwd, null)
+  const llm = config.config?.judge?.llm ?? {}
+  const apiKeyEnv = llm.apiKeyEnv ?? 'DEEPSEEK_API_KEY'
+  const sources = []
+  const envFile = join(cwd, '.cyber', '.env')
+  if (existsSync(envFile)) sources.push({ file: envFile, kind: '界面填写（.cyber/.env）' })
+  const projectEnv = join(cwd, '.env')
+  if (existsSync(projectEnv)) sources.push({ file: projectEnv, kind: '项目 .env' })
+  const userEnv = join(process.env.USERPROFILE ?? process.env.HOME ?? '', '.cyber-overseer', '.env')
+  if (existsSync(userEnv)) sources.push({ file: userEnv, kind: '用户级 .env' })
+  const fromProcess = process.env[apiKeyEnv] ? '环境变量' : null
+  return {
+    judgeKind: config.config?.judge?.kind ?? 'chain',
+    baseUrl: llm.baseUrl ?? 'https://api.deepseek.com/v1',
+    model: llm.model ?? 'deepseek-chat',
+    apiKeyEnv,
+    keySet: Boolean(process.env[apiKeyEnv]),
+    keySource: fromProcess ?? (sources.length ? sources[0].kind : null),
+    sources,
+    envFile,
+    note: config.note,
+  }
+}
+
+/**
+ * 保存 API 设置：密钥写进 `<项目>/.cyber/.env`（在 gitignore 内），模型配置写进界面配置。
+ * 密钥只写不回显。
+ */
+function saveSettings(cwd, body) {
+  const cyberDir = join(cwd, '.cyber')
+  mkdirSync(cyberDir, { recursive: true })
+  const envFile = join(cyberDir, '.env')
+  const apiKeyEnv = String(body.apiKeyEnv ?? body.judge?.llm?.apiKeyEnv ?? 'DEEPSEEK_API_KEY')
+
+  if (typeof body.apiKey === 'string' && body.apiKey.trim()) {
+    const key = body.apiKey.trim()
+    let lines = []
+    try { lines = readFileSync(envFile, 'utf8').split('\n').filter(Boolean) } catch { lines = [] }
+    const kept = lines.filter(line => !new RegExp(`^\\s*${apiKeyEnv}\\s*=`).test(line))
+    kept.push(`${apiKeyEnv}=${key}`)
+    writeFileSync(envFile, kept.join('\n') + '\n', 'utf8')
+    process.env[apiKeyEnv] = key            // 让当前进程立刻生效（"测试连接"用得到）
+  }
+
+  // 密钥（.cyber/.env）与"界面配置"是两件事：即使项目用的是手写 cw.config.mjs，
+  // 密钥也照样能存（它不是配置覆盖，而是 .env）。所以这里分开处理、分开报告。
+  let configSaved = true
+  let configNote = null
+  if (body.judge) {
+    const info = readConfigInfo(cwd, null)
+    if (info.editable === false) {
+      configSaved = false
+      configNote = '这个项目用的是手写 cw.config.mjs：密钥已存，但模型/端点配置没有写入（请直接改那个文件）'
+    } else {
+      const file = join(cyberDir, 'ui.config.json')
+      let existing = {}
+      try { existing = JSON.parse(readFileSync(file, 'utf8')) } catch { existing = {} }
+      const merged = { ...existing, judge: { ...(existing.judge ?? {}), ...body.judge } }
+      writeFileSync(file, JSON.stringify(merged, null, 2), 'utf8')
+    }
+  }
+  return { ok: true, configSaved, configNote, ...readSettings(cwd) }
+}
+
+/**
+ * 测试 API 通不通：发一次最小请求（1 token），报告耗时与错误。
+ * 这是界面上唯一会消耗额度的按钮，且只在你点的时候发生。
+ */
+async function testApi(cwd, body) {
+  const settings = readSettings(cwd)
+  const apiKeyEnv = String(body.apiKeyEnv ?? settings.apiKeyEnv)
+  const apiKey = process.env[apiKeyEnv]
+  const baseUrl = String(body.baseUrl ?? settings.baseUrl).replace(/\/+$/, '')
+  const model = String(body.model ?? settings.model)
+  if (!apiKey) return { ok: false, error: `还没有配 ${apiKeyEnv}：填一个 key 再点测试` }
+  const { jsonRequest } = await import('../util/http.mjs')
+  const started = Date.now()
+  try {
+    const res = await jsonRequest(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${apiKey}` },
+      body: { model, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] },
+      timeoutMs: 30000,
+    })
+    if (!res.ok) {
+      const detail = res.data?.error?.message ?? oneLine(res.text ?? '', 120)
+      return { ok: false, error: `HTTP ${res.status}：${detail}` }
+    }
+    return { ok: true, ms: Date.now() - started, model, baseUrl }
+  } catch (error) {
+    return { ok: false, error: String(error?.message ?? error) }
+  }
 }
 
 /** 读方案文档并解析进度。 */
@@ -379,7 +485,9 @@ async function listSessions(cwd, adapterId, log) {
   if (!probe.ok) return { sessions: [], error: probe.reason }
   const sessions = await adapter.listSessions()
   return {
-    sessions: sessions.slice(0, 60).map(s => ({ id: s.id, title: s.title, cwd: s.cwd, updatedAt: s.updatedAt, status: s.raw?.status ?? null })),
+    // 不截断：之前这里写死 slice(0,60)，而磁盘上有 78 个会话 → 用户会觉得"有些会话看不到"（实测踩到）
+    total: sessions.length,
+    sessions: sessions.slice(0, 2000).map(s => ({ id: s.id, title: s.title, cwd: s.cwd, updatedAt: s.updatedAt, status: s.raw?.status ?? s.status ?? null })),
   }
 }
 
