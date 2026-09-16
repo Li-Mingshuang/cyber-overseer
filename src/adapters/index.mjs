@@ -7,11 +7,12 @@
  * @module cyber-overseer/adapters/index
  */
 
-export const ADAPTER_IDS = ['dsh', 'codex', 'opencode', 'cursor', 'acp', 'human-sim', 'generic-cli', 'mcp-mailbox', 'fake']
+export const ADAPTER_IDS = ['dsh', 'dsh-jsonrpc', 'codex', 'opencode', 'cursor', 'acp', 'human-sim', 'generic-cli', 'mcp-mailbox', 'fake']
 
 /** 适配器清单（给 `cw adapters` 用）。 */
 export const ADAPTER_CATALOG = [
   { id: 'dsh', label: 'DeepSeek Harness (dsh)', channel: '读 session.jsonl.zstd；headless / HTTP / 拟人 / 自定义命令', note: '本项目一等公民' },
+  { id: 'dsh-jsonrpc', label: 'DeepSeek Harness（SDK stdio JSON-RPC）', channel: '常驻 `--profile jrpc` 进程：session/prompt 注入 + session.event 事件流观测', note: '需先 `cw dsh-profile --install`' },
   { id: 'codex', label: 'OpenAI Codex CLI', channel: '读 state_5.sqlite + rollout.jsonl；`codex exec resume`', note: '' },
   { id: 'opencode', label: 'opencode', channel: '读 opencode.db（message/part）；`opencode run -s`', note: '' },
   { id: 'cursor', label: 'Cursor IDE', channel: '读 state.vscdb；官方 stop 钩子 / desktop bridge / 拟人', note: '推荐 hooks 模式' },
@@ -32,6 +33,8 @@ export function createAdapter(adapterId, ctx) {
   switch (adapterId) {
     case 'dsh':
       return requireFactory(ctx, './dsh.mjs', 'createDshAdapter')
+    case 'dsh-jsonrpc':
+      return requireFactory(ctx, './dsh-jsonrpc.mjs', 'createDshJsonRpcAdapter')
     case 'codex':
       return requireFactory(ctx, './codex.mjs', 'createCodexAdapter')
     case 'opencode':
@@ -83,6 +86,7 @@ function requireFactory(ctx, modulePath, exportName) {
 export async function loadAdapters() {
   const mods = [
     ['./dsh.mjs', 'createDshAdapter'],
+    ['./dsh-jsonrpc.mjs', 'createDshJsonRpcAdapter'],
     ['./codex.mjs', 'createCodexAdapter'],
     ['./opencode.mjs', 'createOpencodeAdapter'],
     ['./cursor.mjs', 'createCursorAdapter'],

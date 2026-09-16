@@ -1,0 +1,5 @@
+# 赛博监工的 SDK JSON-RPC profile 补丁层（在 dsh-base 之上插入 stdio JSON-RPC 服务端）。
+# 用法：dsh --profile jrpc —— stdin/stdout 就是协议通道，组合里不要再挂 stdout logger。
+- insert:
+    - id: sdk-jsonrpc-server
+      name: '@deepseek-ai/dsh-sdk-jsonrpc-server'
